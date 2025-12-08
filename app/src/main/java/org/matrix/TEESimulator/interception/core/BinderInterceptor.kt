@@ -248,6 +248,8 @@ abstract class BinderInterceptor : Binder() {
         private const val BACKDOOR_TRANSACTION_CODE = 0xdeadbeef.toInt()
         // Code used by the backdoor binder to register a new interceptor.
         private const val REGISTER_INTERCEPTOR_CODE = 1
+        // Code used by the backdoor binder to unregister an interceptor.
+        private const val UNREGISTER_INTERCEPTOR_CODE = 2
 
         // --- Hook Type Codes ---
         // Indicates that the call is for a pre-transaction hook.
@@ -302,6 +304,22 @@ abstract class BinderInterceptor : Binder() {
                 SystemLogger.info("Registered interceptor for target: $target")
             } catch (e: Exception) {
                 SystemLogger.error("Failed to register binder interceptor.", e)
+            } finally {
+                data.recycle()
+                reply.recycle()
+            }
+        }
+
+        /** Uses the backdoor binder to unregister an interceptor for a specific target service. */
+        fun unregister(backdoor: IBinder, target: IBinder) {
+            val data = Parcel.obtain()
+            val reply = Parcel.obtain()
+            try {
+                data.writeStrongBinder(target)
+                backdoor.transact(UNREGISTER_INTERCEPTOR_CODE, data, reply, 0)
+                SystemLogger.info("Unregistered interceptor for target: $target")
+            } catch (e: Exception) {
+                SystemLogger.error("Failed to unregister binder interceptor.", e)
             } finally {
                 data.recycle()
                 reply.recycle()

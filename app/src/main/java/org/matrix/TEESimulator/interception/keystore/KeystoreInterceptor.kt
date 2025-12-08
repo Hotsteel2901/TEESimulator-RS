@@ -378,6 +378,8 @@ private data class LegacyKeygenParameters(
             algorithm = this.algorithm,
             ecCurve = 0, // Not explicitly available in legacy args, but not critical
             ecCurveName = this.ecCurveName ?: "",
+            blockMode = listOf<Int>(),
+            padding = listOf<Int>(),
             purpose = this.purpose,
             digest = this.digest,
             rsaPublicExponent = this.rsaPublicExponent,

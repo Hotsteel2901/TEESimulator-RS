@@ -1,11 +1,6 @@
 package org.matrix.TEESimulator.logging
 
-import android.hardware.security.keymint.Algorithm
-import android.hardware.security.keymint.Digest
-import android.hardware.security.keymint.EcCurve
-import android.hardware.security.keymint.KeyParameter
-import android.hardware.security.keymint.KeyPurpose
-import android.hardware.security.keymint.Tag
+import android.hardware.security.keymint.*
 import java.math.BigInteger
 import java.nio.charset.StandardCharsets
 import java.util.Date
@@ -34,7 +29,23 @@ object KeyMintParameterLogger {
             .associate { field -> (field.get(null) as Int) to field.name }
     }
 
-    private val purposeNames: Map<Int, String> by lazy {
+    val blockModeNames: Map<Int, String> by lazy {
+        BlockMode::class
+            .java
+            .fields
+            .filter { it.type == Int::class.java }
+            .associate { field -> (field.get(null) as Int) to field.name }
+    }
+
+    val paddingNames: Map<Int, String> by lazy {
+        PaddingMode::class
+            .java
+            .fields
+            .filter { it.type == Int::class.java }
+            .associate { field -> (field.get(null) as Int) to field.name }
+    }
+
+    val purposeNames: Map<Int, String> by lazy {
         KeyPurpose::class
             .java
             .fields
@@ -69,7 +80,9 @@ object KeyMintParameterLogger {
         val formattedValue: String =
             when (param.tag) {
                 Tag.ALGORITHM -> algorithmNames[value.algorithm]
+                Tag.BLOCK_MODE -> blockModeNames[value.blockMode]
                 Tag.EC_CURVE -> ecCurveNames[value.ecCurve]
+                Tag.PADDING -> paddingNames[value.paddingMode]
                 Tag.PURPOSE -> purposeNames[value.keyPurpose]
                 Tag.DIGEST -> digestNames[value.digest]
                 Tag.AUTH_TIMEOUT,

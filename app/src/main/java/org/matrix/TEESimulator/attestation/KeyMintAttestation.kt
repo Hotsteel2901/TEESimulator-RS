@@ -1,8 +1,6 @@
 package org.matrix.TEESimulator.attestation
 
-import android.hardware.security.keymint.EcCurve
-import android.hardware.security.keymint.KeyParameter
-import android.hardware.security.keymint.Tag
+import android.hardware.security.keymint.*
 import java.math.BigInteger
 import java.util.Date
 import javax.security.auth.x500.X500Principal
@@ -22,6 +20,8 @@ data class KeyMintAttestation(
     val algorithm: Int,
     val ecCurve: Int,
     val ecCurveName: String,
+    val blockMode: List<Int>,
+    val padding: List<Int>,
     val purpose: List<Int>,
     val digest: List<Int>,
     val rsaPublicExponent: BigInteger?,
@@ -53,6 +53,12 @@ data class KeyMintAttestation(
         // AOSP: [key_param(tag = EC_CURVE, field = EcCurve)]
         ecCurve = params.findEcCurve(Tag.EC_CURVE) ?: 0,
         ecCurveName = params.deriveEcCurveName(),
+
+        // AOSP: [key_param(tag = BLOCK_MODE, field = BlockMode)]
+        blockMode = params.findAllBlockMode(Tag.BLOCK_MODE),
+
+        // AOSP: [key_param(tag = PADDING, field = PaddingMode)]
+        padding = params.findAllPaddingMode(Tag.PADDING),
 
         // AOSP: [key_param(tag = PURPOSE, field = KeyPurpose)]
         purpose = params.findAllKeyPurpose(Tag.PURPOSE),
@@ -120,6 +126,14 @@ private fun Array<KeyParameter>.findDate(tag: Int): Date? =
 /** Maps to AOSP field = Blob */
 private fun Array<KeyParameter>.findBlob(tag: Int): ByteArray? =
     this.find { it.tag == tag }?.value?.blob
+
+/** Maps to AOSP field = BlockMode (Repeated) */
+private fun Array<KeyParameter>.findAllBlockMode(tag: Int): List<Int> =
+    this.filter { it.tag == tag }.map { it.value.blockMode }
+
+/** Maps to AOSP field = BlockMode (Repeated) */
+private fun Array<KeyParameter>.findAllPaddingMode(tag: Int): List<Int> =
+    this.filter { it.tag == tag }.map { it.value.paddingMode }
 
 /** Maps to AOSP field = KeyPurpose (Repeated) */
 private fun Array<KeyParameter>.findAllKeyPurpose(tag: Int): List<Int> =
