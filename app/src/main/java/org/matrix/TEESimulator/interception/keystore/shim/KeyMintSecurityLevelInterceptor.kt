@@ -168,12 +168,7 @@ class KeyMintSecurityLevelInterceptor(
                     if (isAttestKeyRequest) attestationKeys.add(keyId)
 
                     // Return the metadata of our generated key, skipping the real hardware call.
-                    val resultParcel =
-                        Parcel.obtain().apply {
-                            writeNoException()
-                            writeTypedObject(response.metadata, 0)
-                        }
-                    return TransactionResult.OverrideReply(0, resultParcel)
+                    return InterceptorUtils.createTypedObjectReply(response.metadata)
                 } else if (parsedParams.attestationChallenge != null) {
                     return TransactionResult.Continue
                 }

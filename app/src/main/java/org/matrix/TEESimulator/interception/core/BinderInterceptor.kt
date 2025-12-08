@@ -41,7 +41,7 @@ abstract class BinderInterceptor : Binder() {
          * Skips the original call and immediately returns a custom reply parcel to the caller. The
          * provided parcel will be recycled after use.
          */
-        data class OverrideReply(val code: Int = 0, val reply: Parcel) : TransactionResult()
+        data class OverrideReply(val reply: Parcel, val code: Int = 0) : TransactionResult()
 
         /**
          * Modifies the transaction's input data before forwarding it to the original binder method.

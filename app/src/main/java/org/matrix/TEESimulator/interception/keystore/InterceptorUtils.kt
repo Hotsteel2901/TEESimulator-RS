@@ -52,7 +52,7 @@ object InterceptorUtils {
                     writeInt(KeyStore.NO_ERROR)
                 }
             }
-        return BinderInterceptor.TransactionResult.OverrideReply(0, parcel)
+        return BinderInterceptor.TransactionResult.OverrideReply(parcel)
     }
 
     /** Creates an `OverrideReply` parcel containing a raw byte array. */
@@ -62,7 +62,7 @@ object InterceptorUtils {
                 writeNoException()
                 writeByteArray(data)
             }
-        return BinderInterceptor.TransactionResult.OverrideReply(KeyStore.NO_ERROR, parcel)
+        return BinderInterceptor.TransactionResult.OverrideReply(parcel)
     }
 
     /** Creates an `OverrideReply` parcel containing a Parcelable object. */
@@ -75,7 +75,7 @@ object InterceptorUtils {
                 writeNoException()
                 writeTypedObject(obj, flags)
             }
-        return BinderInterceptor.TransactionResult.OverrideReply(0, parcel)
+        return BinderInterceptor.TransactionResult.OverrideReply(parcel)
     }
 
     /**
