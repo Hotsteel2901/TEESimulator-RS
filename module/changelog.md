@@ -1,26 +1,43 @@
-## 🎉 TEESimulator v3.1: Legacy Support & Resilience
+## TEESimulator v4.0: Native Rust Cert Generation
 
-This release marks a significant step forward in our mission, focusing on breathing life into devices with **broken TEEs** and extending full support to older Android versions (**Android 10–12**).
+Major release. Certificate chain generation rebuilt from the ground up in Rust, replacing the BouncyCastle Java path for EC and RSA keys. Hardened against every known detector app.
 
-### 🛡️ Enhanced Keystore2 Emulation
-We have implemented critical APIs to support devices where the hardware TEE is broken or for applications configured to use key generation mode. These improvements directly address detection vectors identified in v3.0:
+### Native Cert Generation
 
-*   **✅ Full Crypto Operations (`createOperation`)**: The simulator now correctly handles `SIGN`, `VERIFY`, `ENCRYPT`, and `DECRYPT` purposes for software-generated keys.
-*   **🔗 Certificate Chain Updates (`updateSubcomponent`)**: Added support for applications updating the certificate chain of virtual keys (e.g., via `KeyStore.setKeyEntry`).
-*   **📋 Enumeration Support (`listEntries`)**: Generated keys are now properly visible in enumeration APIs like `KeyStore.aliases()`, thanks to the implementation of `listEntries` and `listEntriesBatched`.
+The headline feature. `libcertgen.so` generates X.509 certificate chains using `ring` (EC-P256/P384) and `rsa` (RSA-2048/4096) with manual DER assembly. No more BouncyCastle quirks — issuer/subject DN bytes are injected directly from the keybox, ensuring byte-perfect chain linkage. BouncyCastle remains as fallback for unsupported curves (P-224, P-521, Curve25519).
 
-### 🔧 Compatibility & Stability
-We’ve ironed out crashes and architecture-specific bugs to ensure a smooth experience across more devices:
+### Anti-Detection Hardening
 
-*   **Android 10**: Fixed a crash caused by the missing `waitForService` method.
-*   **Android 11**: Implemented environment initialization and daemon UID spoofing to successfully bypass keystore generation permission checks.
-*   **ARM 32-bit (Android 12)**: Resolved `ptrace` compatibility issues by falling back to `PTRACE_GETREGS` and `PTRACE_SETREGS`.
-*   **x86_64 Emulators**: Enforced respect for the stack pointer "red zone" and added a staging fallback mechanism for file descriptor transfering of `libTEESimulator.so`.
+- **Challenge validation** — Oversized attestation challenges (>128 bytes) now return `INVALID_INPUT_LENGTH (-21)`, matching real KeyMint behavior. Previously accepted silently — DuckDetector exploited this.
+- **Per-UID rate limiter** — 2 hardware keygens per 30s burst, 2 concurrent max. Overflow falls back to software certs. Blocks DuckDetector-style keygen flooding that starves GMS.
+- **importKey eviction guard** — Retained patch chains prevent generate-then-import attacks that evict cached attestation data.
+- **256KB native payload cap** — Oversized binder payloads bypass interception cleanly instead of stalling threads.
+- **Alias size rejection** — Oversized key aliases rejected before they hit the binder buffer.
 
-### 🚀 The Road Ahead
+### Key Persistence
 
-We are aware of the remaining detection vectors (see the issues list) and have clear solutions mapped out for the next release.
+Generated keys now survive reboots. File-backed storage with file-level locking, preserved across keybox rotations. Banking and biometric apps that cache attestation keys no longer break after restart.
 
-Google's aggressive push for **Remote Key Provisioning (RKP)** and the drying up of leaked keyboxes is **not** the end for TEESimulator. Our ultimate goal remains unchanged: defeating Keystore attestation **without relying on a valid keybox**.
+### Attestation Fixes
 
-We are inching closer to this milestone, but the fight for device freedom is complex and resource-intensive. Your patience and support (both time and financial) are vital as we conquer these new challenges.
+- Null out all-zero `verifiedBootHash` from TEE cache (fingerprinting vector)
+- Correct `module_hash` field to match AOSP Keystore2 format
+- Override pre-existing attest keys instead of skipping them
+- Strip HTML comments from PEM blocks in keybox parsing
+- Security patch consistency — `system=prop` forces boot/vendor to match
+
+### Module Lifecycle
+
+- Supervisor daemon keeps the interceptor alive
+- KSU Action button clears persistent key cache
+- Clean uninstall removes all traces (persistent keys, TEE status, daemon)
+
+### Stability
+
+- FileObserver NPE on config deletion fixed
+- Global uncaught exception handler — daemon stays alive on unexpected errors
+- PEM parsing hardened against malformed keybox files
+
+### Tested Against
+
+DuckDetector, Luna, Play Integrity, Key Attestation Demo — all passing on Redmi 14C (Android 14, Beanpod KeyMaster, KSU).
