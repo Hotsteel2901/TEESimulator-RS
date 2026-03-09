@@ -2,33 +2,41 @@ use std::fmt;
 
 #[derive(Debug)]
 pub enum CertGenError {
+    Jni(String),
+    NullParam(&'static str),
+    UnsupportedAlgorithm(i32),
+    UnsupportedEcCurve(i32),
     KeyGenFailed(String),
     CertBuildFailed(String),
-    AttestationEncodeFailed(String),
     KeyboxParseFailed(String),
-    JniError(String),
+    AttestationBuildFailed(String),
+    DerError(der::Error),
+    RcgenError(rcgen::Error),
+    EmptyKeyboxChain,
+    ChallengeTooLong(usize),
     InvalidParameter(String),
-    UnsupportedAlgorithm(i32),
-    UnsupportedCurve(i32),
     SigningFailed(String),
     SerializationFailed(String),
-    InternalError(String),
 }
 
 impl fmt::Display for CertGenError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::Jni(msg) => write!(f, "JNI error: {}", msg),
+            Self::NullParam(name) => write!(f, "null required parameter: {}", name),
+            Self::UnsupportedAlgorithm(v) => write!(f, "unsupported algorithm: {}", v),
+            Self::UnsupportedEcCurve(v) => write!(f, "unsupported EC curve: {}", v),
             Self::KeyGenFailed(msg) => write!(f, "key generation failed: {}", msg),
             Self::CertBuildFailed(msg) => write!(f, "certificate build failed: {}", msg),
-            Self::AttestationEncodeFailed(msg) => write!(f, "attestation encode failed: {}", msg),
             Self::KeyboxParseFailed(msg) => write!(f, "keybox parse failed: {}", msg),
-            Self::JniError(msg) => write!(f, "JNI error: {}", msg),
+            Self::AttestationBuildFailed(msg) => write!(f, "attestation build failed: {}", msg),
+            Self::DerError(e) => write!(f, "DER error: {}", e),
+            Self::RcgenError(e) => write!(f, "rcgen error: {}", e),
+            Self::EmptyKeyboxChain => write!(f, "keybox certificate chain is empty"),
+            Self::ChallengeTooLong(len) => write!(f, "attestation challenge too long: {} bytes (max 128)", len),
             Self::InvalidParameter(msg) => write!(f, "invalid parameter: {}", msg),
-            Self::UnsupportedAlgorithm(v) => write!(f, "unsupported algorithm: {}", v),
-            Self::UnsupportedCurve(v) => write!(f, "unsupported EC curve: {}", v),
             Self::SigningFailed(msg) => write!(f, "signing failed: {}", msg),
             Self::SerializationFailed(msg) => write!(f, "serialization failed: {}", msg),
-            Self::InternalError(msg) => write!(f, "internal error: {}", msg),
         }
     }
 }
@@ -37,13 +45,13 @@ impl std::error::Error for CertGenError {}
 
 impl From<jni::errors::Error> for CertGenError {
     fn from(e: jni::errors::Error) -> Self {
-        Self::JniError(e.to_string())
+        Self::Jni(e.to_string())
     }
 }
 
 impl From<der::Error> for CertGenError {
     fn from(e: der::Error) -> Self {
-        Self::SerializationFailed(e.to_string())
+        Self::DerError(e)
     }
 }
 
@@ -67,13 +75,7 @@ impl From<rsa::Error> for CertGenError {
 
 impl From<rcgen::Error> for CertGenError {
     fn from(e: rcgen::Error) -> Self {
-        Self::CertBuildFailed(e.to_string())
-    }
-}
-
-impl From<anyhow::Error> for CertGenError {
-    fn from(e: anyhow::Error) -> Self {
-        Self::InternalError(e.to_string())
+        Self::RcgenError(e)
     }
 }
 

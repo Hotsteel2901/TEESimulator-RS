@@ -37,7 +37,7 @@ impl TryFrom<i32> for EcCurve {
             2 => Ok(Self::P384),
             3 => Ok(Self::P521),
             4 => Ok(Self::Curve25519),
-            _ => Err(CertGenError::UnsupportedCurve(value)),
+            _ => Err(CertGenError::UnsupportedEcCurve(value)),
         }
     }
 }
@@ -51,6 +51,7 @@ pub enum KeyPurpose {
     Verify = 3,
     WrapKey = 5,
     AgreeKey = 6,
+    AttestKey = 7,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

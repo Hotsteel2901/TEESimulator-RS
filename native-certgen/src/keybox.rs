@@ -18,8 +18,8 @@ pub fn parse_keybox(cert_chain_bytes: &[u8], private_key_bytes: &[u8]) -> Result
     let leaf = Certificate::from_der(&certs[0])
         .map_err(|e| CertGenError::KeyboxParseFailed(format!("leaf cert parse: {e}")))?;
 
-    let issuer_dn_der = leaf.tbs_certificate.issuer.to_der()
-        .map_err(|e| CertGenError::KeyboxParseFailed(format!("issuer DN encode: {e}")))?;
+    let issuer_dn_der = leaf.tbs_certificate.subject.to_der()
+        .map_err(|e| CertGenError::KeyboxParseFailed(format!("subject DN encode: {e}")))?;
 
     let not_after = leaf.tbs_certificate.validity.not_after;
     let leaf_not_after = not_after.to_unix_duration().as_secs() as i64;
