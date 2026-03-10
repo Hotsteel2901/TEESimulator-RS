@@ -51,7 +51,7 @@ fn build_leaf_cert(
     let subject_dn_der = if let Some(ref subject) = params.cert_subject {
         subject.clone()
     } else {
-        encode_simple_cn_dn("Android KeyStore Key")
+        encode_simple_cn_dn("Android Keystore Key")
     };
 
     // Validity

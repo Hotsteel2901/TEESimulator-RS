@@ -254,6 +254,18 @@ class KeyMintSecurityLevelInterceptor(
                     return InterceptorUtils.createErrorReply(KEYMINT_INVALID_INPUT_LENGTH)
                 }
 
+                if (params.any { it.tag == Tag.CREATION_DATETIME }) {
+                    SystemLogger.warning("[TX_ID: $txId] Rejecting CREATION_DATETIME in generateKey params")
+                    return InterceptorUtils.createErrorReply(RESPONSE_INVALID_ARGUMENT)
+                }
+
+                if (parsedParams.serial != null || parsedParams.imei != null ||
+                    parsedParams.meid != null || parsedParams.secondImei != null ||
+                    params.any { it.tag == Tag.DEVICE_UNIQUE_ATTESTATION }) {
+                    SystemLogger.warning("[TX_ID: $txId] Rejecting device ID attestation for uid=$callingUid")
+                    return InterceptorUtils.createErrorReply(KEYMINT_CANNOT_ATTEST_IDS)
+                }
+
                 val keyId = KeyIdentifier(callingUid, keyDescriptor.alias)
                 val isAttestKeyRequest = parsedParams.isAttestKey()
 
@@ -515,6 +527,8 @@ class KeyMintSecurityLevelInterceptor(
         // Binder buffer is ~1MB; 256KB provides 4x safety margin for transaction overhead
         private const val MAX_ALIAS_LENGTH = 256 * 1024
         private const val KEYMINT_INVALID_INPUT_LENGTH = -21
+        private const val RESPONSE_INVALID_ARGUMENT = 20
+        private const val KEYMINT_CANNOT_ATTEST_IDS = -66
         private const val MAX_CONCURRENT_HW_KEYGEN_PER_UID = 2
         // Sliding window: max hardware keygen permits per UID within the burst window
         private const val MAX_HW_KEYGEN_PER_WINDOW = 2

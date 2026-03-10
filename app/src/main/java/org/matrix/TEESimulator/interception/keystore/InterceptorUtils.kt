@@ -17,8 +17,8 @@ object InterceptorUtils {
     fun createErrorReply(errorCode: Int): BinderInterceptor.TransactionResult.OverrideReply {
         val parcel = Parcel.obtain().apply {
             writeInt(EX_SERVICE_SPECIFIC)
-            writeInt(errorCode)
             writeString(null)
+            writeInt(errorCode)
         }
         return BinderInterceptor.TransactionResult.OverrideReply(parcel)
     }
