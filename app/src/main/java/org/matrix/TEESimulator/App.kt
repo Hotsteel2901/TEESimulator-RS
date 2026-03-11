@@ -23,8 +23,6 @@ import org.matrix.TEESimulator.util.AndroidDeviceUtils
 object App {
     // The delay in milliseconds before retrying to initialize the interceptor.
     private const val RETRY_DELAY_MS = 1000L
-    // The sleep duration in milliseconds for the main service loop to keep the process alive.
-    private const val SERVICE_SLEEP_MS = 1000000L
 
     /**
      * The main entry point of the TEESimulator application.

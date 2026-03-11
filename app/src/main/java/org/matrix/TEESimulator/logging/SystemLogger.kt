@@ -19,6 +19,7 @@ object SystemLogger {
      * @param message The message to log.
      */
     fun debug(message: String) {
+        if (!isDebugBuild) return
         Log.d(TAG, message)
     }
 
