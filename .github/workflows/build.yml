@@ -92,8 +92,8 @@ jobs:
           cp "$RELEASE_FILE" "out/TEESimulator-${VER}-Release.zip"
           cp "$DEBUG_FILE" "out/TEESimulator-${VER}-Debug.zip"
 
-          echo "Release: $(basename "$RELEASE_FILE") -> TEESimulator-${VER}-Release.zip"
-          echo "Debug: $(basename "$DEBUG_FILE") -> TEESimulator-${VER}-Debug.zip"
+          echo "Release: $(basename "$RELEASE_FILE") -> TEESimulator-${VER}-Release.zip ($(du -h "$RELEASE_FILE" | cut -f1))"
+          echo "Debug: $(basename "$DEBUG_FILE") -> TEESimulator-${VER}-Debug.zip ($(du -h "$DEBUG_FILE" | cut -f1))"
         env:
           VER: ${{ steps.ver.outputs.version }}
 
@@ -102,12 +102,14 @@ jobs:
           name: TEESimulator-release-zip
           path: out/TEESimulator-*-Release.zip
           retention-days: 30
+          compression-level: 0
 
       - uses: actions/upload-artifact@v4
         with:
           name: TEESimulator-debug-zip
           path: out/TEESimulator-*-Debug.zip
           retention-days: 7
+          compression-level: 0
 
       - uses: actions/upload-artifact@v4
         with:

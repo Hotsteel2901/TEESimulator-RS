@@ -129,6 +129,7 @@ object GeneratedKeyPersistence {
             val file = File(PERSISTENCE_DIR, keyFileName(keyId.uid, keyId.alias))
             if (file.exists()) {
                 if (file.delete()) {
+                    fileLocks.remove(keyFileName(keyId.uid, keyId.alias))
                     SystemLogger.debug("Deleted persisted key: $keyId")
                 } else {
                     SystemLogger.warning("Failed to delete persisted key file: ${file.name}")
@@ -158,6 +159,7 @@ object GeneratedKeyPersistence {
                     if (file.delete()) count++
                 }
             }
+            fileLocks.clear()
             SystemLogger.info("Deleted $count persisted key files")
         }.onFailure { e ->
             SystemLogger.error("Failed to delete all persisted keys", e)
