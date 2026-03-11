@@ -89,11 +89,11 @@ jobs:
             exit 1
           fi
 
-          cp "$RELEASE_FILE" "out/TEESimulator-${VER}-Release.zip"
-          cp "$DEBUG_FILE" "out/TEESimulator-${VER}-Debug.zip"
+          mv "$RELEASE_FILE" "out/TEESimulator-${VER}-Release.zip"
+          mv "$DEBUG_FILE" "out/TEESimulator-${VER}-Debug.zip"
 
-          echo "Release: $(basename "$RELEASE_FILE") -> TEESimulator-${VER}-Release.zip ($(du -h "$RELEASE_FILE" | cut -f1))"
-          echo "Debug: $(basename "$DEBUG_FILE") -> TEESimulator-${VER}-Debug.zip ($(du -h "$DEBUG_FILE" | cut -f1))"
+          echo "Release: TEESimulator-${VER}-Release.zip ($(du -h "out/TEESimulator-${VER}-Release.zip" | cut -f1))"
+          echo "Debug: TEESimulator-${VER}-Debug.zip ($(du -h "out/TEESimulator-${VER}-Debug.zip" | cut -f1))"
         env:
           VER: ${{ steps.ver.outputs.version }}
 
