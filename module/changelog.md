@@ -1,3 +1,13 @@
+## TEESimulator v4.5: Detection Hardening
+
+Tested against [KeyDetector](https://github.com/XiaoTong6666/KeyDetector) (23-check attestation validator). All keystore-level checks now pass.
+
+- **Key deletion consistency** — After deleting a software-generated key, `getKeyEntry` now correctly returns `KEY_NOT_FOUND` instead of falling through to a stale live-patch fallback. Fixes binder consistency checks that detect ghost key responses.
+- **generateKey timing normalization** — Software key generation RTT now matches real TEE latency profile (Gaussian distribution, mean=55ms, floor=15ms). Previously completed in ~4ms, which is an immediate timing side-channel.
+- **Delete cleanup scope** — `deleteKey` now clears all cached state (patched chains, attestation keys) regardless of whether the key was software or hardware-generated.
+
+---
+
 ## TEESimulator v4.4: AOSP Conformance
 
 - **Binder error reply format** — Aligned EX_SERVICE_SPECIFIC wire layout with AOSP Status.cpp, including the remote stack trace header field.
