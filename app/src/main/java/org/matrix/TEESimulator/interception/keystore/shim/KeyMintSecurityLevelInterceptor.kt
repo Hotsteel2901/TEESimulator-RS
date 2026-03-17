@@ -350,7 +350,7 @@ class KeyMintSecurityLevelInterceptor(
         )
 
         val elapsedMs = (System.nanoTime() - startNs) / 1_000_000
-        val delayMs = sampleTeeLatencyMs() - elapsedMs
+        val delayMs = TEE_LATENCY_FLOOR_MS - elapsedMs
         if (delayMs > 0) Thread.sleep(delayMs)
 
         return InterceptorUtils.createTypedObjectReply(response.metadata)
@@ -541,15 +541,12 @@ class KeyMintSecurityLevelInterceptor(
         private const val MAX_ALIAS_LENGTH = 256 * 1024
         private const val KEYMINT_INVALID_INPUT_LENGTH = -21
         private const val RESPONSE_INVALID_ARGUMENT = 20
+        private const val TEE_LATENCY_FLOOR_MS = 15L
         private const val KEYMINT_CANNOT_ATTEST_IDS = -66
         private const val MAX_CONCURRENT_HW_KEYGEN_PER_UID = 2
         // Sliding window: max hardware keygen permits per UID within the burst window
         private const val MAX_HW_KEYGEN_PER_WINDOW = 2
         private const val BURST_WINDOW_MS = 30_000L
-        private const val TEE_LATENCY_MEAN_MS = 55.0
-        private const val TEE_LATENCY_STDDEV_MS = 12.0
-        private const val TEE_LATENCY_FLOOR_MS = 15L
-
         private val uidHardwareKeygenCount = ConcurrentHashMap<Int, AtomicInteger>()
         private val hardwareKeygenTxIds = ConcurrentHashMap.newKeySet<Long>()
         private val uidKeygenTimestamps = ConcurrentHashMap<Int, MutableList<Long>>()
@@ -575,11 +572,6 @@ class KeyMintSecurityLevelInterceptor(
             synchronized(timestamps) {
                 timestamps.add(System.currentTimeMillis())
             }
-        }
-
-        private fun sampleTeeLatencyMs(): Long {
-            val sample = TEE_LATENCY_MEAN_MS + secureRandom.nextGaussian() * TEE_LATENCY_STDDEV_MS
-            return sample.toLong().coerceAtLeast(TEE_LATENCY_FLOOR_MS)
         }
 
         private val GENERATE_KEY_TRANSACTION =
