@@ -145,9 +145,15 @@ private class CipherPrimitive(
     override fun abort() {}
 }
 
-class SoftwareOperation(private val txId: Long, keyPair: KeyPair, params: KeyMintAttestation) {
+class SoftwareOperation(
+    private val txId: Long,
+    keyPair: KeyPair,
+    params: KeyMintAttestation,
+    private val latencyFloorMs: Long = 0L,
+) {
     private val primitive: CryptoPrimitive
-    @Volatile private var finalized = false
+    @Volatile var finalized = false
+        private set
 
     init {
         val purpose = params.purpose.firstOrNull()
@@ -166,21 +172,28 @@ class SoftwareOperation(private val txId: Long, keyPair: KeyPair, params: KeyMin
     }
 
     private fun checkActive() {
-        if (finalized) throw ServiceSpecificException(KeystoreErrorCodes.invalidOperationHandle)
+        if (finalized) {
+            SystemLogger.debug("[SoftwareOp TX_ID: $txId] Rejected: operation already finalized (pruned or completed)")
+            throw ServiceSpecificException(KeystoreErrorCodes.invalidOperationHandle)
+        }
     }
 
     private fun checkInputLength(data: ByteArray?) {
-        if (data != null && data.size > MAX_RECEIVE_DATA)
+        if (data != null && data.size > MAX_RECEIVE_DATA) {
+            SystemLogger.info("[SoftwareOp TX_ID: $txId] Input too large: ${data.size} > $MAX_RECEIVE_DATA, throwing TOO_MUCH_DATA(${KeystoreErrorCodes.tooMuchData})")
             throw ServiceSpecificException(KeystoreErrorCodes.tooMuchData)
+        }
     }
 
     fun updateAad(aadInput: ByteArray?) {
+        SystemLogger.debug("[SoftwareOp TX_ID: $txId] updateAad() inputSize=${aadInput?.size ?: 0}")
         checkActive()
         checkInputLength(aadInput)
         primitive.updateAad(aadInput)
     }
 
     fun update(data: ByteArray?): ByteArray? {
+        SystemLogger.debug("[SoftwareOp TX_ID: $txId] update() inputSize=${data?.size ?: 0}")
         checkActive()
         checkInputLength(data)
         try {
@@ -197,7 +210,13 @@ class SoftwareOperation(private val txId: Long, keyPair: KeyPair, params: KeyMin
         checkActive()
         checkInputLength(data)
         try {
+            val startNs = if (latencyFloorMs > 0) System.nanoTime() else 0L
             val result = primitive.finish(data, signature)
+            if (latencyFloorMs > 0) {
+                val elapsedMs = (System.nanoTime() - startNs) / 1_000_000
+                val delayMs = latencyFloorMs - elapsedMs
+                if (delayMs > 0) Thread.sleep(delayMs)
+            }
             finalized = true
             SystemLogger.info("[SoftwareOp TX_ID: $txId] Finished operation successfully.")
             return result
