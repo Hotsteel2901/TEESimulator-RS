@@ -33,6 +33,7 @@ import org.matrix.TEESimulator.pki.CertificateHelper
 import org.matrix.TEESimulator.pki.KeyBoxManager
 import org.matrix.TEESimulator.pki.NativeCertGen
 import org.matrix.TEESimulator.util.AndroidDeviceUtils
+import org.matrix.TEESimulator.util.AndroidPermissionUtils
 
 class KeyMintSecurityLevelInterceptor(
     private val original: IKeystoreSecurityLevel,
@@ -267,8 +268,21 @@ class KeyMintSecurityLevelInterceptor(
                     return InterceptorUtils.createErrorReply(RESPONSE_INVALID_ARGUMENT)
                 }
 
-                if (params.any { it.tag == Tag.DEVICE_UNIQUE_ATTESTATION }) {
+                if (params.any { it.tag == Tag.DEVICE_UNIQUE_ATTESTATION } && !AndroidPermissionUtils.hasUniqueIdAttestationPermission(callingUid)) {
                     SystemLogger.warning("[TX_ID: $txId] Rejecting DEVICE_UNIQUE_ATTESTATION for uid=$callingUid")
+                    return InterceptorUtils.createErrorReply(KEYMINT_CANNOT_ATTEST_IDS)
+                }
+
+                val hasDeviceIdAttestation = params.any { 
+                    it.tag == Tag.ATTESTATION_ID_IMEI || 
+                    it.tag == Tag.ATTESTATION_ID_MEID || 
+                    it.tag == Tag.ATTESTATION_ID_SERIAL || 
+                    it.tag == Tag.DEVICE_UNIQUE_ATTESTATION || 
+                    it.tag == Tag.ATTESTATION_ID_SECOND_IMEI 
+                }
+
+                if(hasDeviceIdAttestation && !AndroidPermissionUtils.hasDeviceAttestationPermission(callingUid)) {
+                    SystemLogger.warning("[TX_ID: $txId] Rejecting DEVICE_ID_ATTESTATION for uid=$callingUid")
                     return InterceptorUtils.createErrorReply(KEYMINT_CANNOT_ATTEST_IDS)
                 }
 
