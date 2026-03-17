@@ -240,7 +240,7 @@ object CertificateGenerator {
 
         val signerAlgorithm =
             when (signingKeyPair.private.algorithm) {
-                "EC" -> "SHA256withECDSA"
+                "EC", "ECDSA" -> "SHA256withECDSA"
                 "RSA" -> "SHA256withRSA"
                 else -> throw IllegalArgumentException("Unsupported signing key: ${signingKeyPair.private.algorithm}")
             }

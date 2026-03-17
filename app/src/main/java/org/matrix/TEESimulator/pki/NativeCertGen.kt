@@ -105,7 +105,7 @@ object NativeCertGen {
         }
 
         val algorithmName = when (certs[0].publicKey.algorithm) {
-            "EC" -> "EC"
+            "EC", "ECDSA" -> "EC"
             "RSA" -> "RSA"
             else -> certs[0].publicKey.algorithm
         }
