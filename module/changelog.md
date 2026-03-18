@@ -1,3 +1,9 @@
+## TEESimulator-RS v4.8.1: StrongBox Op Rejection Fix
+
+- **StrongBox op limit gate fix** — `trackAndEnforceOpLimit` was only called in the `Domain.KEY_ID` not-found path, so software-generated keys (found via `Domain.APP`) bypassed `STRONGBOX_MAX_CONCURRENT_OPS=4` entirely. DuckDetector's concurrent signing handles test created 24+ operations that all succeeded via LRU pruning instead of being rejected with `TOO_MANY_OPERATIONS (-29)`. Now enforced for all StrongBox createOperation paths.
+
+---
+
 ## TEESimulator-RS v4.8: StrongBox Hardening & LRU Pruning
 
 Tested against DuckDetector on OnePlus (Android 16, KSU). Tamper score dropped from 32 to 8.
