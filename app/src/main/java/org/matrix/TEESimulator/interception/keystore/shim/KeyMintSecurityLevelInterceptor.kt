@@ -1069,10 +1069,8 @@ private fun KeyMintAttestation.toAuthorizations(
         )
     }
 
-    if (this.noAuthRequired != null) {
-        authList.add(
-            createAuth(Tag.NO_AUTH_REQUIRED, KeyParameterValue.boolValue(this.noAuthRequired))
-        )
+    if (this.noAuthRequired != false) {
+        authList.add(createAuth(Tag.NO_AUTH_REQUIRED, KeyParameterValue.boolValue(true)))
     }
 
     if (this.callerNonce == true) {

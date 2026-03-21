@@ -516,6 +516,11 @@ object AttestationBuilder {
                 )
             )
         }
+        if (params.callerNonce == true) {
+            list.add(
+                DERTaggedObject(true, AttestationConstants.TAG_CALLER_NONCE, DERNull.INSTANCE)
+            )
+        }
         if (params.unlockedDeviceRequired == true) {
             list.add(
                 DERTaggedObject(
