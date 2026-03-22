@@ -1,3 +1,26 @@
+## TEESimulator-RS v5.1.1: Pre-Stash Restoration
+
+Restores all custom hardening fixes that were lost during the PR #157 migration. These were working in pre-stash builds but never carried over to the post-stash codebase, causing user-reported regressions (boot hash instability, DuckDetector score regression, config crash on file deletion).
+
+- **Boot hash persistence** restored: 4-step fallback (sysprop, TEE, file, random) with file writes at every step. Fixes "Boot: Unavailable" where boot hash randomized every reboot on devices without `ro.boot.vbmeta.digest`
+- **Presence-based findBoolean** for KeyMint tags: boolean tags are presence-based per AIDL spec, `.boolValue` field isn't reliably populated across Android versions
+- **noAuthRequired** defaults to true when not explicitly false, matching AOSP KeyMint behavior
+- **callerNonce** tag now flows through to software-enforced attestation list
+- **CTR block mode** restored in cipher algorithm mapping (was dropped in PR #157)
+- **AEAD guard** on updateAad: non-GCM operations throw INVALID_TAG
+- **Error code resolution** via lazy reflection with correct KeyMint AIDL fallback values
+- **Latency floor** on SoftwareOperation.finish() for StrongBox timing simulation
+- **FileObserver NPE** fixed: null-safe handling on config file DELETE events
+- **system=prop** consistency: forces boot/vendor patch levels to derive from device props
+- **StrongBox simulation** restored: capability checks (RSA<=2048, EC=P256), concurrent op limits (4 max), keygen latency floor (250ms), op latency floor (80ms)
+- **Binder buffer guard**: MAX_ALIAS_LENGTH (256KB) rejects oversized aliases before processing
+- **Key lifecycle tracking**: deletedSoftwareKeys set prevents ghost key responses after deletion
+- **Per-UID operation limits**: 15 TEE, 4 StrongBox with LRU eviction
+- **EC+DECRYPT rejection** in createOperation, matching AOSP unsupported purpose check
+- **Attest key nspace update** aligned with upstream PR #169
+
+---
+
 ## TEESimulator-RS v5.1: Interception Architecture Rewrite
 
 Major release. 27 files changed, 2300 lines rewritten. The entire Kotlin interception layer has been rebuilt with a clean architecture, proper AIDL alignment, and significantly lower binder overhead.
