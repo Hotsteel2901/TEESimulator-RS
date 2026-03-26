@@ -164,7 +164,7 @@ object AttestationPatcher {
         // Log the signature of the newly created certificate to observe its non-deterministic
         // nature.
         val signatureBytes = (newCertificate as X509Certificate).signature
-        SystemLogger.verbose("Signature of patched leaf cert: ${signatureBytes.toHex()}")
+        SystemLogger.verbose { "Signature of patched leaf cert: ${signatureBytes.toHex()}" }
 
         return newCertificate
     }
@@ -286,8 +286,10 @@ object AttestationPatcher {
     private fun createPatchedAttestationExtension(parsed: ParsedAttestation, uid: Int): Extension {
         val (allFields, teeEnforcedMap, originalRootOfTrust) = parsed
 
-        var formattedString = allFields.joinToString(separator = ", ") { formatAsn1Primitive(it) }
-        SystemLogger.verbose("Original attestation data: ${formattedString}")
+        SystemLogger.verbose {
+            val formattedString = allFields.joinToString(separator = ", ") { formatAsn1Primitive(it) }
+            "Original attestation data: $formattedString"
+        }
 
         // Build the new Root of Trust and add/replace it in the map.
         val newRootOfTrust = AttestationBuilder.buildRootOfTrust(originalRootOfTrust)
@@ -314,8 +316,10 @@ object AttestationPatcher {
 
         allFields[AttestationConstants.KEY_DESCRIPTION_TEE_ENFORCED_INDEX] = sortedTeeEnforced
         val patchedSequence = DERSequence(allFields)
-        formattedString = patchedSequence.joinToString(separator = ", ") { formatAsn1Primitive(it) }
-        SystemLogger.verbose("Patched  attestation data: ${formattedString}")
+        SystemLogger.verbose {
+            val formattedString = patchedSequence.joinToString(separator = ", ") { formatAsn1Primitive(it) }
+            "Patched  attestation data: $formattedString"
+        }
         val patchedOctets = DEROctetString(patchedSequence)
 
         return Extension(ATTESTATION_OID, false, patchedOctets)

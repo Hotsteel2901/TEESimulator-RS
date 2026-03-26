@@ -148,11 +148,12 @@ object DeviceAttestationService {
 
             // The extension's value is an ASN.1 sequence.
             val keyDescriptionSeq = ASN1Sequence.getInstance(extension.extnValue.octets)
-            var formattedString =
-                keyDescriptionSeq.joinToString(separator = ", ") {
+            SystemLogger.verbose {
+                val formattedString = keyDescriptionSeq.joinToString(separator = ", ") {
                     AttestationPatcher.formatAsn1Primitive(it)
                 }
-            SystemLogger.verbose("Cached attestation data: ${formattedString}")
+                "Cached attestation data: $formattedString"
+            }
             val fields = keyDescriptionSeq.toArray()
 
             val attestVersion =

@@ -43,11 +43,12 @@ object AttestationBuilder {
         securityLevel: Int,
     ): Extension {
         val keyDescription = buildKeyDescription(params, uid, securityLevel)
-        var formattedString =
-            keyDescription.joinToString(separator = ", ") {
+        SystemLogger.verbose {
+            val formattedString = keyDescription.joinToString(separator = ", ") {
                 AttestationPatcher.formatAsn1Primitive(it)
             }
-        SystemLogger.verbose("Forged attestation data: ${formattedString}")
+            "Forged attestation data: $formattedString"
+        }
         return Extension(ATTESTATION_OID, false, DEROctetString(keyDescription.encoded))
     }
 
