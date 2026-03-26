@@ -1,3 +1,24 @@
+## TEESimulator-RS v6.0.0
+
+Repository consolidation release. All tee-rebuild work merged as the new main branch.
+
+### AOSP Self-Signed Cert Compliance
+- No-challenge keys now generate self-signed certs (subject == issuer, depth 1), matching AOSP `ta/src/keys.rs:451-478`
+- Both Kotlin (BouncyCastle) and Rust (native-certgen) paths corrected
+- Eliminates attestation behavioral probes that detect keybox issuer on non-attested keys
+
+### Stability
+- Binder stress crash hardening for concurrent generateKey calls
+- AUTO mode TEE race for consistent attestation on devices with working G10
+- Oversized transactions routed to software gen instead of crashing
+- Operation-time params (BLOCK_MODE, PADDING, DIGEST) passed through to CipherPrimitive
+
+### Infrastructure
+- Version scheme changed to semver (v6.0.0)
+- Repository moved to TEESimulator-RS as canonical source
+
+---
+
 ## TEESimulator-RS v5.0: AOSP Compliance Overhaul
 
 Major release integrating 30+ AOSP compliance improvements from upstream PR #157 analysis, layered on top of our StrongBox hardening and native cert gen architecture.

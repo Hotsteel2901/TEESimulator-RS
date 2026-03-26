@@ -1,6 +1,6 @@
 {
-	"version": "v4.5",
-	"versionCode": 111,
-	"zipUrl": "https://github.com/Enginex0/TEESimulator/releases/download/v4.5/TEESimulator-v4.5-Release.zip",
-	"changelog": "https://raw.githubusercontent.com/Enginex0/TEESimulator/main/module/changelog.md"
+	"version": "v6.0.0",
+	"versionCode": 155,
+	"zipUrl": "https://github.com/Enginex0/TEESimulator-RS/releases/latest/download/TEESimulator-RS-Release.zip",
+	"changelog": "https://raw.githubusercontent.com/Enginex0/TEESimulator-RS/main/module/changelog.md"
 }
