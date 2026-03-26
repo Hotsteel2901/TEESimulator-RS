@@ -332,6 +332,11 @@ object Keystore2Interceptor : AbstractKeystoreInterceptor() {
                         }
                         SystemLogger.info("[TX_ID: $txId] Imported key overwrote attested alias, serving retained chain for $keyId")
                         CertificateHelper.updateCertificateChain(response.metadata, retainedChain).getOrThrow()
+                        response.metadata.authorizations =
+                            InterceptorUtils.patchAuthorizations(
+                                response.metadata.authorizations,
+                                callingUid,
+                            )
                         return InterceptorUtils.createTypedObjectReply(response)
                     }
 
