@@ -142,12 +142,14 @@ class KeyMintSecurityLevelInterceptor(
             }
             attestationKeys.remove(keyId)
             importedKeys.add(keyId)
+            SystemLogger.trace { "[TRACE-$txId] post-importKey $keyId: added to importedKeys, skipUid=${ConfigurationManager.shouldSkipUid(callingUid)}" }
 
             if (!ConfigurationManager.shouldSkipUid(callingUid)) {
                 val metadata: KeyMetadata =
                     reply.readTypedObject(KeyMetadata.CREATOR)
                         ?: return TransactionResult.SkipTransaction
                 val originalChain = CertificateHelper.getCertificateChain(metadata)
+                SystemLogger.trace { "[TRACE-$txId] post-importKey $keyId: chainSize=${originalChain?.size ?: 0}" }
                 if (originalChain != null && originalChain.size > 1) {
                     val newChain = AttestationPatcher.patchCertificateChain(originalChain, callingUid)
                     CertificateHelper.updateCertificateChain(metadata, newChain).getOrThrow()
@@ -158,6 +160,7 @@ class KeyMintSecurityLevelInterceptor(
                         this.metadata = metadata
                         iSecurityLevel = original
                     }
+                    SystemLogger.trace { "[TRACE-$txId] post-importKey $keyId: PATCHED chain (chainSize=${newChain.size})" }
                     SystemLogger.debug("Cached patched certificate chain for imported key $keyId.")
                     return InterceptorUtils.createTypedObjectReply(metadata)
                 }
@@ -420,6 +423,11 @@ class KeyMintSecurityLevelInterceptor(
                 val params = data.createTypedArray(KeyParameter.CREATOR)!!
                 val parsedParams = KeyMintAttestation(params)
 
+                SystemLogger.trace { "[TRACE-$txId] generateKey alias=${keyDescriptor.alias} algo=${parsedParams.algorithm} challenge=${parsedParams.attestationChallenge?.size ?: "null"} serial=${parsedParams.serial != null} imei=${parsedParams.imei != null} noAuth=${parsedParams.noAuthRequired} purposes=${parsedParams.purpose}" }
+                if (SystemLogger.isDebugBuild) params.forEach { p ->
+                    SystemLogger.trace { "[TRACE-$txId] tag=${p.tag} value=${p.value}" }
+                }
+
                 val challenge = parsedParams.attestationChallenge
                 if (challenge != null && challenge.size > AttestationConstants.CHALLENGE_LENGTH_LIMIT) {
                     SystemLogger.warning("[TX_ID: $txId] Rejecting oversized attestation challenge: ${challenge.size} bytes (max ${AttestationConstants.CHALLENGE_LENGTH_LIMIT})")
@@ -486,6 +494,8 @@ class KeyMintSecurityLevelInterceptor(
                 val isAuto = ConfigurationManager.isAutoMode(callingUid)
 
                 if (isAuto) SystemLogger.debug("AUTO dispatch: teePathDecision=${teePathDecision.get()} for ${keyDescriptor.alias}")
+
+                SystemLogger.trace { "[TRACE-$txId] dispatch: forceGen=$forceGenerate isAuto=$isAuto teePath=${teePathDecision.get()} hasChallenge=${challenge != null} isSymmetric=$isSymmetric isAttestKey=$isAttestKeyRequest" }
 
                 when {
                     forceGenerate -> doSoftwareKeyGen(callingUid, keyDescriptor, attestationKey, parsedParams, keyId, isAttestKeyRequest)
@@ -577,6 +587,17 @@ class KeyMintSecurityLevelInterceptor(
         val response = buildKeyEntryResponse(callingUid, keyData.second, parsedParams, keyDescriptor)
         generatedKeys[keyId] = GeneratedKeyInfo(keyData.first, null, keyDescriptor.nspace, response, parsedParams)
         if (isAttestKeyRequest) attestationKeys.add(keyId)
+
+        if (SystemLogger.isDebugBuild) {
+            val chain = keyData.second
+            val leaf = chain.firstOrNull() as? java.security.cert.X509Certificate
+            SystemLogger.trace {
+                "[certchain] ${keyDescriptor.alias}: depth=${chain.size} " +
+                "issuer=${leaf?.issuerX500Principal?.name} " +
+                "subject=${leaf?.subjectX500Principal?.name} " +
+                "hasAttest=${leaf?.getExtensionValue("1.3.6.1.4.1.11129.2.1.17") != null}"
+            }
+        }
 
         val certChainCopy = keyData.second.toList()
         persistExecutor.execute {

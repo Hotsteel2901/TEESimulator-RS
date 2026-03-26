@@ -62,17 +62,13 @@ fn generate_attested_inner(env: &mut JNIEnv, config: &JObject) -> Result<jbyteAr
 
     let keybox = keybox::parse_keybox(&params.keybox_cert_chain, &params.keybox_private_key)?;
 
-    let attest_ext = match params.attestation_challenge {
-        Some(_) => Some(attestation::build_attestation_extension(&params)?),
-        None => None,
+    let cert_chain = if params.attestation_challenge.is_some() {
+        let attest_ext = attestation::build_attestation_extension(&params)?;
+        certbuilder::build_certificate_chain(&key_pair, Some(&attest_ext), &keybox, &params)?
+    } else {
+        tracing::info!("no attestation challenge, generating self-signed cert (depth 1)");
+        certbuilder::build_self_signed_cert(&key_pair, &params)?
     };
-
-    let cert_chain = certbuilder::build_certificate_chain(
-        &key_pair,
-        attest_ext.as_deref(),
-        &keybox,
-        &params,
-    )?;
 
     let blob = assemble_result(&key_pair.private_key_pkcs8, &cert_chain);
 

@@ -93,6 +93,12 @@ object CertificateGenerator {
             )
 
         return try {
+                // AOSP ta/src/keys.rs:451-478: no challenge + no attestKey = self-signed, depth 1
+                if (challenge == null && attestKeyAlias == null) {
+                    SystemLogger.trace { "[certgen] no-challenge key: self-signed, depth=1, purposes=${params.purpose}" }
+                    return listOf(buildSelfSignedCertificate(subjectKeyPair, params))
+                }
+
                 val keybox = getKeyboxForAlgorithm(uid, params.algorithm)
 
                 val (signingKey, issuer) =
@@ -254,6 +260,41 @@ object CertificateGenerator {
             JcaContentSignerBuilder(signerAlgorithm)
                 .setProvider(BouncyCastleProvider.PROVIDER_NAME)
                 .build(signingKeyPair.private)
+
+        return JcaX509CertificateConverter().getCertificate(builder.build(contentSigner))
+    }
+
+    // AOSP ta/src/keys.rs:452-478, ta/src/cert.rs:111-114
+    private fun buildSelfSignedCertificate(
+        keyPair: KeyPair,
+        params: KeyMintAttestation,
+    ): Certificate {
+        val subject = params.certificateSubject ?: X500Name("CN=Android Keystore Key")
+        val notBefore = params.certificateNotBefore ?: Date(0)
+        val notAfter = params.certificateNotAfter ?: Date(UNDEFINED_NOT_AFTER)
+
+        val builder = JcaX509v3CertificateBuilder(
+            subject,
+            params.certificateSerial ?: BigInteger.ONE,
+            notBefore,
+            notAfter,
+            subject,
+            keyPair.public,
+        )
+
+        val keyUsageBits = buildKeyUsageFromPurposes(params.purpose)
+        if (keyUsageBits != 0) {
+            builder.addExtension(Extension.keyUsage, true, KeyUsage(keyUsageBits))
+        }
+
+        val signerAlgorithm = when (keyPair.private.algorithm) {
+            "EC", "ECDSA" -> "SHA256withECDSA"
+            "RSA" -> "SHA256withRSA"
+            else -> throw IllegalArgumentException("Unsupported key: ${keyPair.private.algorithm}")
+        }
+        val contentSigner = JcaContentSignerBuilder(signerAlgorithm)
+            .setProvider(BouncyCastleProvider.PROVIDER_NAME)
+            .build(keyPair.private)
 
         return JcaX509CertificateConverter().getCertificate(builder.build(contentSigner))
     }

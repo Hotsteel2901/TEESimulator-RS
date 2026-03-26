@@ -14,6 +14,66 @@ const OID_SHA256_WITH_RSA: &[u64] = &[1, 2, 840, 113549, 1, 1, 11];
 // Extension OIDs
 const OID_KEY_USAGE: &[u64] = &[2, 5, 29, 15];
 
+// AOSP ta/src/keys.rs:451-478: no challenge = self-signed leaf, chain depth 1
+pub fn build_self_signed_cert(
+    key_pair: &GeneratedKeyPair,
+    params: &CertGenParams,
+) -> Result<Vec<Vec<u8>>> {
+    let spki_der = extract_spki_from_pkcs8(&key_pair.private_key_pkcs8)?;
+    let sig_alg_der = signature_algorithm_for_signing_key(&key_pair.private_key_pkcs8, params.algorithm)?;
+
+    let serial_bytes = if let Some(ref serial) = params.cert_serial {
+        serial.clone()
+    } else {
+        vec![1u8]
+    };
+
+    let subject_dn_der = if let Some(ref subject) = params.cert_subject {
+        subject.clone()
+    } else {
+        encode_simple_cn_dn("Android Keystore Key")
+    };
+
+    let not_before = timestamp_to_datetime(params.cert_not_before)?;
+    let not_after = if params.cert_not_after == -1 {
+        // No keybox fallback available; use far-future (year 9999)
+        OffsetDateTime::from_unix_timestamp(253402300799)
+            .unwrap_or_else(|_| OffsetDateTime::now_utc() + time::Duration::days(365 * 30))
+    } else {
+        timestamp_to_datetime(params.cert_not_after)?
+    };
+
+    let extensions_der = build_extensions(None, &params.purposes)?;
+
+    let version_der = encode_der_explicit_tag(0, &encode_der_integer(&[2]));
+    let serial_der = encode_der_integer(&serial_bytes);
+    let validity_der = encode_validity(&not_before, &not_after);
+    let extensions_tagged = encode_der_explicit_tag(3, &extensions_der);
+
+    // issuer == subject (self-signed, per AOSP ta/src/cert.rs:111-114)
+    let tbs_der = encode_der_sequence(&[
+        &version_der,
+        &serial_der,
+        &sig_alg_der,
+        &subject_dn_der,
+        &validity_der,
+        &subject_dn_der,
+        &spki_der,
+        &extensions_tagged,
+    ]);
+
+    let signature_bytes = sign_tbs(&tbs_der, &key_pair.private_key_pkcs8, params.algorithm)?;
+    let signature_bit_string = encode_der_bit_string(&signature_bytes);
+
+    let cert_der = encode_der_sequence(&[
+        &tbs_der,
+        &sig_alg_der,
+        &signature_bit_string,
+    ]);
+
+    Ok(vec![cert_der])
+}
+
 pub fn build_certificate_chain(
     key_pair: &GeneratedKeyPair,
     attestation_ext_der: Option<&[u8]>,

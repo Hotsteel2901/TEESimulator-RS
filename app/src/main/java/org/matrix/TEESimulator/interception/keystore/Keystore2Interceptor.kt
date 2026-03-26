@@ -314,6 +314,7 @@ object Keystore2Interceptor : AbstractKeystoreInterceptor() {
                     val keyId = KeyIdentifier(callingUid, keyDescriptor.alias)
 
                     if (userUpdatedKeys.remove(keyId)) {
+                        SystemLogger.trace { "[TRACE-$txId] getKeyEntry $keyId: userUpdated=true, skipping patch" }
                         SystemLogger.debug("[TX_ID: $txId] Skipping cert patch for user-updated key $keyId.")
                         return TransactionResult.SkipTransaction
                     }
@@ -324,12 +325,16 @@ object Keystore2Interceptor : AbstractKeystoreInterceptor() {
                             authorizations?.map { it.keyParameter }?.toTypedArray() ?: emptyArray()
                         )
 
+                    SystemLogger.trace { "[TRACE-$txId] getKeyEntry $keyId: isImport=${parsedParameters.isImportKey()} origin=${parsedParameters.origin} inImportedKeys=${KeyMintSecurityLevelInterceptor.importedKeys.contains(keyId)} hasPatchedChain=${KeyMintSecurityLevelInterceptor.getPatchedChain(keyId) != null} isAttestKey=${parsedParameters.isAttestKey()}" }
+
                     if (parsedParameters.isImportKey()) {
                         val retainedChain = KeyMintSecurityLevelInterceptor.getPatchedChain(keyId)
                         if (retainedChain == null) {
+                            SystemLogger.trace { "[TRACE-$txId] getKeyEntry $keyId: imported, no retained chain, skip" }
                             SystemLogger.info("[TX_ID: $txId] Skip patching for imported key (no prior attestation).")
                             return TransactionResult.SkipTransaction
                         }
+                        SystemLogger.trace { "[TRACE-$txId] getKeyEntry $keyId: imported, SERVING RETAINED CHAIN (detection vector!)" }
                         SystemLogger.info("[TX_ID: $txId] Imported key overwrote attested alias, serving retained chain for $keyId")
                         CertificateHelper.updateCertificateChain(response.metadata, retainedChain).getOrThrow()
                         response.metadata.authorizations =
@@ -341,6 +346,7 @@ object Keystore2Interceptor : AbstractKeystoreInterceptor() {
                     }
 
                     if (KeyMintSecurityLevelInterceptor.importedKeys.contains(keyId)) {
+                        SystemLogger.trace { "[TRACE-$txId] getKeyEntry $keyId: in importedKeys set, skip" }
                         SystemLogger.debug("[TX_ID: $txId] Skipping attest-key override for imported key $keyId")
                         return TransactionResult.SkipTransaction
                     }
@@ -464,7 +470,11 @@ object Keystore2Interceptor : AbstractKeystoreInterceptor() {
             }
 
         if (generatedKeyInfo == null) {
-            descriptor.alias?.let { userUpdatedKeys.add(KeyIdentifier(callingUid, it)) }
+            descriptor.alias?.let {
+                val kid = KeyIdentifier(callingUid, it)
+                userUpdatedKeys.add(kid)
+                SystemLogger.trace { "[TRACE] updateSubcomponent $kid: not generated key, added to userUpdatedKeys" }
+            }
             return TransactionResult.ContinueAndSkipPost
         }
 

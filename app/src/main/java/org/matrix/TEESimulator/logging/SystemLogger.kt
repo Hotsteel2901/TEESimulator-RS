@@ -117,4 +117,9 @@ object SystemLogger {
         if (!acquireLogPermit()) return
         Log.v(TAG, message())
     }
+
+    inline fun trace(message: () -> String) {
+        if (!isDebugBuild) return
+        Log.w(TAG, message())
+    }
 }
