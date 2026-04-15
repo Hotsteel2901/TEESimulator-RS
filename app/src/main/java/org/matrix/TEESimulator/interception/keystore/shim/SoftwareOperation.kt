@@ -254,10 +254,18 @@ class SoftwareOperation(
     }
 
     fun updateAad(aadInput: ByteArray?) {
-        SystemLogger.debug("[SoftwareOp TX_ID: $txId] updateAad() inputSize=${aadInput?.size ?: 0}")
+        SystemLogger.info("[SoftwareOp TX_ID: $txId] updateAad() ENTRY inputSize=${aadInput?.size ?: 0} primitive=${primitive::class.simpleName}")
         checkActive()
         checkInputLength(aadInput)
-        primitive.updateAad(aadInput)
+        try {
+            primitive.updateAad(aadInput)
+            SystemLogger.info("[SoftwareOp TX_ID: $txId] updateAad() RETURNED_NORMALLY (unexpected for non-AEAD)")
+        } catch (throwable: Throwable) {
+            val top = throwable.stackTrace.firstOrNull()?.toString() ?: "<no-frame>"
+            val code = (throwable as? ServiceSpecificException)?.errorCode
+            SystemLogger.info("[SoftwareOp TX_ID: $txId] updateAad() THREW class=${throwable::class.java.name} code=$code msg=${throwable.message} top=$top")
+            throw throwable
+        }
     }
 
     fun update(data: ByteArray?): ByteArray? {
@@ -387,7 +395,15 @@ class SoftwareOperationBinder(private val operation: SoftwareOperation) :
 
     @Synchronized
     override fun updateAad(aadInput: ByteArray?) {
-        operation.updateAad(aadInput)
+        SystemLogger.info("[SoftwareOpBinder] updateAad() ENTRY callingUid=${android.os.Binder.getCallingUid()} size=${aadInput?.size ?: 0}")
+        try {
+            operation.updateAad(aadInput)
+            SystemLogger.info("[SoftwareOpBinder] updateAad() RETURNED_NORMALLY")
+        } catch (throwable: Throwable) {
+            val code = (throwable as? ServiceSpecificException)?.errorCode
+            SystemLogger.info("[SoftwareOpBinder] updateAad() PROPAGATING class=${throwable::class.java.name} code=$code msg=${throwable.message}")
+            throw throwable
+        }
     }
 
     @Synchronized
