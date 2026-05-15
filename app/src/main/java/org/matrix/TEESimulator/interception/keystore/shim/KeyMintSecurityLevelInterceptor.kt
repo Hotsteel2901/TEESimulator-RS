@@ -1123,7 +1123,12 @@ private fun KeyMintAttestation.toAuthorizations(
         }
         return Authorization().apply {
             this.keyParameter = param
-            this.securityLevel = SecurityLevel.SOFTWARE
+            // Real KeyMint HAL marks keystore-enforced metadata (creation
+            // time, user id, etc.) with SecurityLevel.KEYSTORE (0x64), not
+            // SOFTWARE (0x00). Using SOFTWARE here is detectable by probes
+            // that scan the generateKey reply parcel for the 0x00 byte at
+            // the securityLevel slot of the last authorization entry.
+            this.securityLevel = SecurityLevel.KEYSTORE
         }
     }
 
