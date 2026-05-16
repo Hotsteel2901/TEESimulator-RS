@@ -242,16 +242,18 @@ class SoftwareOperation(
         primitive =
             when (purpose) {
                 KeyPurpose.SIGN -> {
-                    requireNotNull(keyPair) {
-                        "[SoftwareOp TX_ID: $txId] SIGN requested but keyPair is null"
-                    }
-                    Signer(keyPair, params)
+                    val kp = keyPair ?: throw ServiceSpecificException(
+                        KeystoreErrorCodes.invalidArgument,
+                        "[SoftwareOp TX_ID: $txId] SIGN requested but keyPair is null",
+                    )
+                    Signer(kp, params)
                 }
                 KeyPurpose.VERIFY -> {
-                    requireNotNull(keyPair) {
-                        "[SoftwareOp TX_ID: $txId] VERIFY requested but keyPair is null"
-                    }
-                    Verifier(keyPair, params)
+                    val kp = keyPair ?: throw ServiceSpecificException(
+                        KeystoreErrorCodes.invalidArgument,
+                        "[SoftwareOp TX_ID: $txId] VERIFY requested but keyPair is null",
+                    )
+                    Verifier(kp, params)
                 }
                 KeyPurpose.ENCRYPT -> {
                     val key: java.security.Key = secretKey ?: keyPair?.public
@@ -270,10 +272,11 @@ class SoftwareOperation(
                     CipherPrimitive(key, params, Cipher.DECRYPT_MODE)
                 }
                 KeyPurpose.AGREE_KEY -> {
-                    requireNotNull(keyPair) {
-                        "[SoftwareOp TX_ID: $txId] AGREE_KEY requested but keyPair is null"
-                    }
-                    KeyAgreementPrimitive(keyPair)
+                    val kp = keyPair ?: throw ServiceSpecificException(
+                        KeystoreErrorCodes.invalidArgument,
+                        "[SoftwareOp TX_ID: $txId] AGREE_KEY requested but keyPair is null",
+                    )
+                    KeyAgreementPrimitive(kp)
                 }
                 else ->
                     throw ServiceSpecificException(

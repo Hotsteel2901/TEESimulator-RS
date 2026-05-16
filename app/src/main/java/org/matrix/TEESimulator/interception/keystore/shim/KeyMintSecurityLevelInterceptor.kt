@@ -911,16 +911,22 @@ class KeyMintSecurityLevelInterceptor(
                             }
                         }.getOrElse { e ->
                             SystemLogger.warning(
-                                "Failed to restore symmetric metadata for ${record.alias}",
+                                "Failed to restore symmetric metadata for ${record.alias}, falling back to primitive rebuild",
                                 e,
                             )
-                            return@runCatching
+                            rebuildSymmetricResponse(record)
                         }
                     } else {
                         // Pre-v3 file with symmetric key — should not happen
-                        // because v3 always saves metadata, but be defensive.
-                        SystemLogger.warning("Symmetric record ${record.alias} missing metadata bytes, skipping")
-                        return@runCatching
+                        // because v3 always saves metadata, but be defensive:
+                        // rebuild a minimal KeyMetadata from primitives so
+                        // the secret material is still restored. Without
+                        // this, dropping the record would silently log the
+                        // user out the next time the alias is used.
+                        SystemLogger.info(
+                            "Symmetric record ${record.alias} missing metadata bytes, rebuilding from primitives"
+                        )
+                        rebuildSymmetricResponse(record)
                     }
                     generatedKeys[keyId] = GeneratedKeyInfo(
                         keyPair = null,
@@ -1020,11 +1026,11 @@ class KeyMintSecurityLevelInterceptor(
     }
 
     /**
-     * Fallback rebuild path used when no v2 metadata snapshot is available
+     * Fallback rebuild path used when no v3 metadata snapshot is available
      * (key was saved by an older build, or the snapshot failed to deserialize).
      * Rebuilds KeyEntryResponse from primitive fields. This loses any
      * authorization tags that weren't captured at save time, which is why we
-     * prefer the byte-identical v2 snapshot whenever possible.
+     * prefer the byte-identical v3 snapshot whenever possible.
      */
     private fun rebuildResponseFromRecord(
         record: PersistedKeyData,
@@ -1076,6 +1082,84 @@ class KeyMintSecurityLevelInterceptor(
             rsaOaepMgfDigest = emptyList(),
         )
         return buildKeyEntryResponse(record.uid, certChain, attestation, descriptor)
+    }
+
+    /**
+     * Defensive fallback for symmetric key records that somehow ended up
+     * without a metadata snapshot (e.g. a save where Parcel.marshall()
+     * threw and persisted an empty mdBytes, or a future format where the
+     * snapshot is lazily populated). Without this fallback, loadAll would
+     * skip the record and the secret material would be effectively lost,
+     * silently logging the user out the next time the alias is used.
+     *
+     * The rebuilt KeyMetadata is structurally minimal — only the primitive
+     * authorization tags we captured at save time. That's worse than a
+     * byte-identical snapshot for apps that fingerprint metadata, but it
+     * still keeps the AES key alive across reboots, which is the
+     * dominant correctness concern.
+     */
+    private fun rebuildSymmetricResponse(record: PersistedKeyData): KeyEntryResponse {
+        val attestation = KeyMintAttestation(
+            keySize = record.keySize,
+            algorithm = record.algorithm,
+            ecCurve = record.ecCurve,
+            ecCurveName = "",
+            origin = null,
+            blockMode = emptyList(),
+            padding = emptyList(),
+            purpose = record.purposes,
+            digest = record.digests,
+            rsaPublicExponent = null,
+            certificateSerial = null,
+            certificateSubject = null,
+            certificateNotBefore = null,
+            certificateNotAfter = null,
+            attestationChallenge = null,
+            brand = null,
+            device = null,
+            product = null,
+            serial = null,
+            imei = null,
+            meid = null,
+            manufacturer = null,
+            model = null,
+            secondImei = null,
+            activeDateTime = null,
+            originationExpireDateTime = null,
+            usageExpireDateTime = null,
+            usageCountLimit = null,
+            callerNonce = null,
+            nonce = null,
+            unlockedDeviceRequired = null,
+            includeUniqueId = null,
+            rollbackResistance = null,
+            earlyBootOnly = null,
+            allowWhileOnBody = null,
+            trustedUserPresenceRequired = null,
+            trustedConfirmationRequired = null,
+            noAuthRequired = null,
+            maxUsesPerBoot = null,
+            maxBootLevel = null,
+            minMacLength = null,
+            rsaOaepMgfDigest = emptyList(),
+        )
+        val metadata = KeyMetadata().apply {
+            keySecurityLevel = securityLevel
+            key = KeyDescriptor().apply {
+                domain = Domain.KEY_ID
+                nspace = record.nspace
+                alias = null
+                blob = null
+            }
+            certificate = null
+            certificateChain = null
+            authorizations = attestation.toAuthorizations(record.uid, securityLevel)
+            modificationTimeMs = System.currentTimeMillis()
+        }
+        return KeyEntryResponse().apply {
+            this.metadata = metadata
+            iSecurityLevel = original
+        }
     }
 
     companion object {
