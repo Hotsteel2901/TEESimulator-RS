@@ -164,6 +164,24 @@ object AndroidDeviceUtils {
         }
     }
 
+    internal fun setProperty(name: String, value: String) {
+        try {
+            SystemLogger.debug("Setting system property '$name' to: $value")
+            val command = arrayOf("resetprop", name, value)
+            val process = Runtime.getRuntime().exec(command)
+            val exitCode = process.waitFor()
+
+            if (exitCode != 0) {
+                val errorOutput = process.errorStream.bufferedReader().readText()
+                SystemLogger.error(
+                    "resetprop for '$name' failed with exit code $exitCode: $errorOutput"
+                )
+            }
+        } catch (e: Exception) {
+            SystemLogger.error("Failed to set '$name' property via resetprop.", e)
+        }
+    }
+
     private fun generateRandomBytes(size: Int): ByteArray =
         ByteArray(size).also { ThreadLocalRandom.current().nextBytes(it) }
 

@@ -8,6 +8,7 @@ import android.os.Build
 import android.os.Looper
 import java.security.Security
 import org.bouncycastle.jce.provider.BouncyCastleProvider
+import org.matrix.TEESimulator.config.BootStateManager
 import org.matrix.TEESimulator.config.ConfigurationManager
 import org.matrix.TEESimulator.interception.keystore.AbstractKeystoreInterceptor
 import org.matrix.TEESimulator.interception.keystore.Keystore2Interceptor
@@ -44,6 +45,7 @@ object App {
 
             // Load the package configuration.
             ConfigurationManager.initialize()
+            BootStateManager.apply()
             // Set up the device's boot key and hash, which are crucial for attestation.
             AndroidDeviceUtils.setupBootKeyAndHash()
 
