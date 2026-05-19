@@ -346,7 +346,9 @@ object AndroidDeviceUtils {
                 6 -> { // YYYYMM
                     val year = normalized.substring(0, 4).toInt()
                     val month = normalized.substring(4, 6).toInt()
-                    if (isLong) year * 10000 + month * 100 + 1 else year * 100 + month
+                    // Synthesizing day=01 from YYYY-MM disagrees with real device bulletins;
+                    // propagate null so callers fall back to a YYYY-MM-DD source.
+                    if (isLong) null else year * 100 + month
                 }
                 else -> null
             }
