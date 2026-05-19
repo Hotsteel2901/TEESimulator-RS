@@ -9,6 +9,7 @@ import android.os.Looper
 import java.security.Security
 import org.bouncycastle.jce.provider.BouncyCastleProvider
 import org.matrix.TEESimulator.config.BootStateManager
+import org.matrix.TEESimulator.config.BulletinPoller
 import org.matrix.TEESimulator.config.ConfigurationManager
 import org.matrix.TEESimulator.config.PatchLevelManager
 import org.matrix.TEESimulator.interception.keystore.AbstractKeystoreInterceptor
@@ -58,6 +59,8 @@ object App {
             Security.addProvider(BouncyCastleProvider())
 
             NativeCertGen.initialize("/data/adb/modules/tricky_store/libcertgen.so")
+
+            BulletinPoller.start()
 
             // This starts the message queue processing. It blocks here indefinitely
             // processing messages until Looper.myLooper().quit() is called.

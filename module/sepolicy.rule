@@ -1,2 +1,9 @@
 allow keystore {adb_data_file shell_data_file} file *
 allow crash_dump keystore process *
+
+allow ksu self:tcp_socket { create connect read write getopt setopt }
+allow ksu node:tcp_socket node_bind
+allow ksu port:tcp_socket name_connect
+allow magisk self:tcp_socket { create connect read write getopt setopt }
+allow magisk node:tcp_socket node_bind
+allow magisk port:tcp_socket name_connect
