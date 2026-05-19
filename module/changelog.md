@@ -1,3 +1,55 @@
+## TEESimulator-RS v6.0.0-224
+
+59 commits since v6.0.0-162. Self-sufficient spoofing infrastructure, Duck Detector TamperScore-4 cleared on Xiaomi A16, persistent symmetric key storage (PR #22), 22-language action button hardening.
+
+### Detection Coverage
+- Duck Detector TimingSideChannelProbe cleared on Xiaomi A16 (SDK 35). Timing ratio dropped 1.555x to 1.055x, verdict WARNING to CLEAR. Threshold is > 1.1x.
+- `KEY_ID` resolved from `teeResponses` instead of synthesized, matching real KeyMint binder behavior.
+- Non-attested key cache mirrors attested path for byte-level metadata parity.
+- `KEY_SIZE` emitted for EC keys; omitted when `ecCurve` is present, matching AOSP attestation_record.h.
+- SSE messages synthesized canonically on non-AEAD `updateAad`; passthrough shape normalized.
+- StrongBox attest version no longer hardcoded; resolved from device context.
+- TEE op latency floor enforced to defeat micro-timing probes.
+- Attest key resolution restored to nspace-aware lookup after revert/restore cycle.
+
+### Self-Sufficient Spoofing
+- `PatchLevelManager` resolves OS/VENDOR/BOOT patch levels via PIF without external bulletin fetch.
+- `BulletinPoller` refreshes bulletin data on a schedule, isolated from boot path via umbrella `try/catch`.
+- Bootloader-lock props pushed via `resetprop` at boot; absent vbmeta complement props filled; `vbmeta.device_state` included.
+- PIF hot-reload via `FileObserver`; empty source files skipped; future patch dates bounded by `MAX_FUTURE_DAYS`.
+- Default `security_patch.txt` dropped at install time.
+- `sepolicy.rule` allows UDP egress for DNS resolution.
+
+### Key Persistence (PR #22)
+- Symmetric keys persist across reboots with byte-identical metadata.
+- Keybox edits no longer wipe stored keys.
+- Delete marker dropped on key regeneration to prevent stale state.
+- Defensive symmetric fallback path with clean error codes.
+
+### Reliability
+- `atomicWrite` preserves `[pkg]` sections; errors guarded in `updateTo`.
+- `applyToProps` serialized against concurrent callers.
+- `pollOnce` wrapped in umbrella `try/catch`; `BulletinPoller.start` failure isolated from spoofer init.
+- Spoofer ordering fixed: runs before keystore hook to prevent attest-time prop drift.
+- `isAutoMode` reads raw package mode; `system=prop` passive default respected.
+- `mergedContents` propagates read errors instead of swallowing them.
+- Date regex validation on `currentPatch`; YYYY-MM input skips day synthesis.
+- Global key-assignment check requires `=` delimiter (no more partial matches).
+- `validation_rejected` status emitted on invalid spoof input.
+
+### Action Button UX
+- Vol+ required to clear `persistent_keys`. Vol- cancels. 10-second timeout defaults to cancel.
+- Confirmation localized in 22 languages: ar, az, bn, de, el, es-ES, fa, fr, id, it, ja, ko, pl, pt-BR, ru, th, tl, tr, uk, vi, zh-CN, zh-TW.
+- Every echoed string resolves through `_msg()` against device locale.
+
+### Build & Ops
+- Kotlin `jvmTarget` raised to JVM 21.
+- Gradle auto-rewrites `module/update.json` on packaging.
+- `scripts/package.sh` locates user-local cargo; rust task receives cargo bin path.
+- Verified on Xiaomi Android 16 (SDK 35) `v6.0.0-224-Release`. Daemon alive PID 1392. Pending cross-device confirm on OnePlus PKX110 (qcom sun) and Samsung SM-S928B (pineapple).
+
+---
+
 ## TEESimulator-RS v6.0.0
 
 Repository consolidation release. All tee-rebuild work merged as the new main branch.
