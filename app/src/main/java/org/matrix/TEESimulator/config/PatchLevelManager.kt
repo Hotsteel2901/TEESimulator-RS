@@ -38,7 +38,18 @@ object PatchLevelManager {
                     Build.VERSION.SECURITY_PATCH,
                 )
         SystemLogger.info("PatchLevelManager: resolved patch date = $date")
-        updateTo(date)
+        applyToProps(date)
+    }
+
+    private fun applyToProps(date: String) {
+        if (!DATE_PATTERN.matches(date)) {
+            SystemLogger.warning(
+                "PatchLevelManager: skip resetprop for invalid date: $date"
+            )
+            return
+        }
+        AndroidDeviceUtils.setProperty("ro.build.version.security_patch", date)
+        AndroidDeviceUtils.setProperty("ro.vendor.build.security_patch", date)
     }
 
     fun updateTo(date: String) {
@@ -70,8 +81,7 @@ object PatchLevelManager {
             return
         }
         atomicWrite(date)
-        AndroidDeviceUtils.setProperty("ro.build.version.security_patch", date)
-        AndroidDeviceUtils.setProperty("ro.vendor.build.security_patch", date)
+        applyToProps(date)
         SystemLogger.info("PatchLevelManager: applied patch date $date")
     }
 

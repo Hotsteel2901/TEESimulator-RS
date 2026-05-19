@@ -101,7 +101,10 @@ object BulletinPoller {
                 )
             }
             val current = currentPatch()
-            val isNewer = current == null || date > current
+            if (current == null) {
+                return FetchResult(ts, "success", code, date, false, null)
+            }
+            val isNewer = date > current
             if (isNewer) {
                 PatchLevelManager.updateTo(date)
             }
