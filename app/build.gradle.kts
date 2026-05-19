@@ -108,6 +108,34 @@ tasks.configureEach {
     }
 }
 
+// Auto-rewrite module/update.json on every packaging build so versionCode and
+// zipUrl track gitCommitCount automatically, matching module.prop.
+val refreshUpdateJson by tasks.registering {
+    group = "TEESimulator-RS Module Packaging"
+    description = "Rewrite module/update.json to match current verName and gitCommitCount."
+
+    val updateJsonFile = rootProject.projectDir.resolve("module/update.json")
+    val capturedVerName = verName
+    val capturedCount = gitCommitCount
+
+    inputs.property("verName", capturedVerName)
+    inputs.property("gitCommitCount", capturedCount)
+    outputs.file(updateJsonFile)
+
+    doLast {
+        val fullVer = "$capturedVerName-$capturedCount"
+        updateJsonFile.writeText(
+            """{
+  "version": "$fullVer",
+  "versionCode": $capturedCount,
+  "zipUrl": "https://github.com/Enginex0/TEESimulator-RS/releases/download/$fullVer/TEESimulator-RS-$fullVer-Release.zip",
+  "changelog": "https://raw.githubusercontent.com/Enginex0/TEESimulator-RS/main/module/changelog.md"
+}
+"""
+        )
+    }
+}
+
 androidComponents {
     onVariants(selector().all()) { variant ->
         val capitalized = variant.name.replaceFirstChar { it.uppercase() }
@@ -132,6 +160,7 @@ androidComponents {
                     dependsOn("strip${capitalized}DebugSymbols")
                 }
                 dependsOn(buildRustCertgen)
+                dependsOn(refreshUpdateJson)
 
                 if (isDebug) {
                     from(variant.artifacts.get(SingleArtifact.APK)) {
