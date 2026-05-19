@@ -93,7 +93,9 @@ object PatchLevelManager {
     }
 
     private fun resolvePifPatch(): String? {
-        val source = PIF_SOURCES.map(::File).lastOrNull { it.exists() } ?: return null
+        val source =
+            PIF_SOURCES.map(::File).lastOrNull { it.exists() && it.length() > 0 }
+                ?: return null
         return try {
             val text = source.readText()
             val parsed =
