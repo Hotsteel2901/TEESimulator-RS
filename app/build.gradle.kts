@@ -2,6 +2,7 @@ import com.android.build.api.artifact.SingleArtifact
 import java.io.ByteArrayOutputStream
 import javax.inject.Inject
 import org.gradle.process.ExecOperations
+import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 
 plugins {
     alias(libs.plugins.android.application)
@@ -62,6 +63,12 @@ android {
             path = file("src/main/cpp/CMakeLists.txt")
             buildStagingDirectory = layout.buildDirectory.get().asFile
         }
+    }
+}
+
+kotlin {
+    compilerOptions {
+        jvmTarget.set(JvmTarget.JVM_21)
     }
 }
 
