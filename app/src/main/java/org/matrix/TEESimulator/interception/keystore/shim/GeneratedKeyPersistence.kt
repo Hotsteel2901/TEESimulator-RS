@@ -29,13 +29,47 @@ data class PersistedKeyData(
     val ecCurve: Int,
     val purposes: List<Int>,
     val digests: List<Int>,
+    /** PKCS#8-encoded private key for asymmetric records, empty for symmetric. */
     val privateKeyBytes: ByteArray,
     val certChainBytes: List<ByteArray>,
+    /**
+     * Byte-identical KeyMetadata parcel snapshot. Restoring authorizations
+     * directly from these bytes preserves tag count, order, and exact
+     * security-level annotations across reboots — the kind of structural
+     * details apps fingerprint to decide whether the alias is still
+     * "the same key".
+     */
+    val metadataBytes: ByteArray,
+    /**
+     * Raw secret material for symmetric records (AES, HMAC, 3DES). Empty
+     * for asymmetric. Critical for AndroidX security crypto MasterKey
+     * (AES-GCM-256) — without this every reboot regenerates a fresh AES
+     * key and EncryptedSharedPreferences becomes undecryptable, which is
+     * what banking apps interpret as session expiry and force a relogin.
+     */
+    val symmetricKeyBytes: ByteArray,
+    val symmetricAlgorithm: String,
 )
 
 object GeneratedKeyPersistence {
 
-    private const val FORMAT_VERSION = 1
+    /**
+     * Single source of truth for the on-disk format. Bump this every time
+     * the layout changes; older numbers are silently skipped on read so
+     * stale dev artifacts and pre-fix upstream files can't be partially
+     * rehydrated into broken in-memory state.
+     *
+     * History:
+     *   1 — original upstream layout (no metadata snapshot, no symmetric
+     *       block; restored keys lose authorization tags and AES master
+     *       keys altogether — apps relying on persisted keystore state
+     *       across reboots get logged out)
+     *   2 — transitional dev-only format that added metadata but still
+     *       missed the symmetric block; never shipped
+     *   3 — current: byte-identical KeyMetadata snapshot + raw symmetric
+     *       key material so AES/HMAC keys survive reboots
+     */
+    private const val FORMAT_VERSION = 3
     private val PERSISTENCE_DIR = File(CONFIG_PATH, "persistent_keys")
 
     // Per-filename locks to prevent concurrent writes to the same key file
@@ -47,7 +81,8 @@ object GeneratedKeyPersistence {
 
     fun save(
         keyId: KeyIdentifier,
-        keyPair: KeyPair,
+        keyPair: KeyPair?,
+        secretKey: javax.crypto.SecretKey?,
         nspace: Long,
         securityLevel: Int,
         certChain: List<Certificate>,
@@ -57,7 +92,11 @@ object GeneratedKeyPersistence {
         purposes: List<Int>,
         digests: List<Int>,
         isAttestationKey: Boolean,
+        metadataBytes: ByteArray? = null,
     ) {
+        require(keyPair != null || secretKey != null) {
+            "Either keyPair or secretKey must be provided"
+        }
         val filename = keyFileName(keyId.uid, keyId.alias)
         val lock = getLockForKey(filename)
         SystemLogger.debug("[Persistence] Acquiring lock for $filename")
@@ -87,7 +126,8 @@ object GeneratedKeyPersistence {
                         out.writeInt(digests.size)
                         digests.forEach { out.writeInt(it) }
 
-                        val pkBytes = keyPair.private.encoded
+                        // Asymmetric key block (empty for symmetric-only).
+                        val pkBytes = keyPair?.private?.encoded ?: ByteArray(0)
                         out.writeInt(pkBytes.size)
                         out.write(pkBytes)
 
@@ -96,6 +136,23 @@ object GeneratedKeyPersistence {
                             val encoded = cert.encoded
                             out.writeInt(encoded.size)
                             out.write(encoded)
+                        }
+
+                        // Metadata snapshot (always present, may be empty
+                        // if the live KeyMetadata could not be marshalled).
+                        val mdBytes = metadataBytes ?: ByteArray(0)
+                        out.writeInt(mdBytes.size)
+                        if (mdBytes.isNotEmpty()) out.write(mdBytes)
+
+                        // Symmetric key block (empty for asymmetric keys).
+                        if (secretKey != null) {
+                            val skBytes = secretKey.encoded
+                            out.writeUTF(secretKey.algorithm)
+                            out.writeInt(skBytes.size)
+                            out.write(skBytes)
+                        } else {
+                            out.writeUTF("")
+                            out.writeInt(0)
                         }
                     }
                 } catch (e: Exception) {
@@ -189,8 +246,17 @@ object GeneratedKeyPersistence {
                 DataInputStream(BufferedInputStream(FileInputStream(file))).use { input ->
                     val version = input.readInt()
                     if (version != FORMAT_VERSION) {
-                        SystemLogger.warning(
-                            "Skipping ${file.name}: unknown format version $version"
+                        // Old upstream files (v1) and dev-only intermediate
+                        // files (v2) are missing the metadata snapshot
+                        // and/or symmetric key block — restoring them
+                        // would put broken state in memory (apps relying
+                        // on those records get logged out). Skip and let
+                        // the next generateKey re-create cleanly with the
+                        // new format. Affected apps re-login once after
+                        // upgrade, then never again.
+                        SystemLogger.info(
+                            "Skipping ${file.name}: legacy format version $version. " +
+                            "It will be replaced on next generateKey for this alias."
                         )
                         return@runCatching
                     }
@@ -212,7 +278,7 @@ object GeneratedKeyPersistence {
 
                     val pkLen = requireBounds(input.readInt(), 8192, "pkLen")
                     val pkBytes = ByteArray(pkLen)
-                    input.readFully(pkBytes)
+                    if (pkLen > 0) input.readFully(pkBytes)
 
                     val certCount = requireBounds(input.readInt(), 10, "certCount")
                     val certChainBytes = (0 until certCount).map {
@@ -220,6 +286,17 @@ object GeneratedKeyPersistence {
                         val certBytes = ByteArray(certLen)
                         input.readFully(certBytes)
                         certBytes
+                    }
+
+                    val metaLen = requireBounds(input.readInt(), 256 * 1024, "metaLen")
+                    val metadataBytes = ByteArray(metaLen).also {
+                        if (metaLen > 0) input.readFully(it)
+                    }
+
+                    val skAlgo = input.readUTF()
+                    val skLen = requireBounds(input.readInt(), 8192, "skLen")
+                    val skBytes = ByteArray(skLen).also {
+                        if (skLen > 0) input.readFully(it)
                     }
 
                     if (storedSecLevel == securityLevel) {
@@ -237,6 +314,9 @@ object GeneratedKeyPersistence {
                                 digests = digests,
                                 privateKeyBytes = pkBytes,
                                 certChainBytes = certChainBytes,
+                                metadataBytes = metadataBytes,
+                                symmetricKeyBytes = skBytes,
+                                symmetricAlgorithm = skAlgo,
                             )
                         )
                     }
@@ -292,7 +372,7 @@ object GeneratedKeyPersistence {
             DataInputStream(BufferedInputStream(FileInputStream(existing))).use { input ->
                 val version = input.readInt()
                 if (version != FORMAT_VERSION) {
-                    SystemLogger.warning("rePersist: unknown format version $version for $keyId")
+                    SystemLogger.warning("rePersist: legacy format version $version for $keyId, will not re-persist (next generateKey replaces it)")
                     return
                 }
                 readPersistedKeyData(input)
@@ -303,10 +383,29 @@ object GeneratedKeyPersistence {
             return
         }
 
-        val keyPair = generatedKeyInfo.keyPair ?: return
+        val keyPair = generatedKeyInfo.keyPair
+        val secretKey = generatedKeyInfo.secretKey
+        if (keyPair == null && secretKey == null) {
+            SystemLogger.warning("rePersist: no key material for $keyId")
+            return
+        }
+        // Serialize the live KeyMetadata (now contains the user-installed cert
+        // chain via updateSubcomponent) so the next boot restores byte-identical
+        // metadata. KeyMetadata is binder-free, so marshall() is safe here.
+        val metadataBytes = runCatching {
+            android.os.Parcel.obtain().let { parcel ->
+                try {
+                    metadata.writeToParcel(parcel, 0)
+                    parcel.marshall()
+                } finally {
+                    parcel.recycle()
+                }
+            }
+        }.getOrNull()
         save(
             keyId = keyId,
             keyPair = keyPair,
+            secretKey = secretKey,
             nspace = generatedKeyInfo.nspace,
             securityLevel = secLevel,
             certChain = newChain.toList(),
@@ -316,6 +415,7 @@ object GeneratedKeyPersistence {
             purposes = persisted.purposes,
             digests = persisted.digests,
             isAttestationKey = persisted.isAttestationKey,
+            metadataBytes = metadataBytes,
         )
         SystemLogger.debug("Re-persisted key $keyId with updated cert chain")
     }
@@ -332,7 +432,8 @@ object GeneratedKeyPersistence {
         return digest.joinToString("") { "%02x".format(it) } + ".bin"
     }
 
-    // Reads all fields after version has already been consumed
+    // Reads all fields after the version int has already been consumed
+    // and validated by the caller.
     private fun readPersistedKeyData(input: DataInputStream): PersistedKeyData {
         val secLevel = input.readInt()
         val uid = input.readInt()
@@ -351,7 +452,7 @@ object GeneratedKeyPersistence {
 
         val pkLen = requireBounds(input.readInt(), 8192, "pkLen")
         val pkBytes = ByteArray(pkLen)
-        input.readFully(pkBytes)
+        if (pkLen > 0) input.readFully(pkBytes)
 
         val certCount = requireBounds(input.readInt(), 10, "certCount")
         val certChainBytes = (0 until certCount).map {
@@ -359,6 +460,17 @@ object GeneratedKeyPersistence {
             val certBytes = ByteArray(certLen)
             input.readFully(certBytes)
             certBytes
+        }
+
+        val metaLen = requireBounds(input.readInt(), 256 * 1024, "metaLen")
+        val metadataBytes = ByteArray(metaLen).also {
+            if (metaLen > 0) input.readFully(it)
+        }
+
+        val skAlgo = input.readUTF()
+        val skLen = requireBounds(input.readInt(), 8192, "skLen")
+        val skBytes = ByteArray(skLen).also {
+            if (skLen > 0) input.readFully(it)
         }
 
         return PersistedKeyData(
@@ -374,6 +486,9 @@ object GeneratedKeyPersistence {
             digests = digests,
             privateKeyBytes = pkBytes,
             certChainBytes = certChainBytes,
+            metadataBytes = metadataBytes,
+            symmetricKeyBytes = skBytes,
+            symmetricAlgorithm = skAlgo,
         )
     }
 }

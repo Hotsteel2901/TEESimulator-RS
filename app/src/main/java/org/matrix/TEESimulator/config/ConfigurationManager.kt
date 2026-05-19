@@ -297,10 +297,15 @@ object ConfigurationManager {
                         )
                         KeyBoxManager.invalidateCache(path)
                         if (Build.VERSION.SDK_INT > Build.VERSION_CODES.R) {
-                            // Clear cached keys possibly containing old certificates
+                            // Drop only the patched cert chains so the next
+                            // attestation request re-signs with the new keybox.
+                            // Do NOT drop generatedKeys — that would destroy
+                            // every alias/private key in memory and on disk,
+                            // logging users out of any app that pinned a
+                            // persisted keystore alias.
                             org.matrix.TEESimulator.interception.keystore.shim
                                 .KeyMintSecurityLevelInterceptor
-                                .clearAllGeneratedKeys("updating $file")
+                                .invalidatePatchedChains("updating $file")
                         }
                     }
             }

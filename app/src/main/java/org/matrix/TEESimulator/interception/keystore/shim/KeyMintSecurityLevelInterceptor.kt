@@ -571,6 +571,40 @@ class KeyMintSecurityLevelInterceptor(
             generatedKeys[keyId] = GeneratedKeyInfo(null, secretKey, keyDescriptor.nspace, response, parsedParams)
             Keystore2Interceptor.forgetDeletedKey(keyId)
 
+            // Persist symmetric keys too. Without this, AndroidX security
+            // crypto MasterKey (AES-GCM-256) is regenerated on every reboot
+            // and any EncryptedSharedPreferences becomes undecryptable —
+            // which apps that wrap their session token in
+            // EncryptedSharedPreferences interpret as session expiry.
+            // Snapshot the metadata bytes alongside the raw secret
+            // material so authorizations restore byte-identical.
+            val metadataBytesForSymmetric = runCatching {
+                val parcel = android.os.Parcel.obtain()
+                try {
+                    metadata.writeToParcel(parcel, 0)
+                    parcel.marshall()
+                } finally {
+                    parcel.recycle()
+                }
+            }.getOrNull()
+            persistExecutor.execute {
+                GeneratedKeyPersistence.save(
+                    keyId = keyId,
+                    keyPair = null,
+                    secretKey = secretKey,
+                    nspace = keyDescriptor.nspace,
+                    securityLevel = securityLevel,
+                    certChain = emptyList(),
+                    algorithm = parsedParams.algorithm,
+                    keySize = parsedParams.keySize,
+                    ecCurve = parsedParams.ecCurve ?: 0,
+                    purposes = parsedParams.purpose,
+                    digests = parsedParams.digest,
+                    isAttestationKey = false,
+                    metadataBytes = metadataBytesForSymmetric,
+                )
+            }
+
             if (securityLevel == SecurityLevel.STRONGBOX) {
                 val delayMs = STRONGBOX_KEYGEN_LATENCY_FLOOR_MS - (System.nanoTime() - genStartNanos) / 1_000_000
                 if (delayMs > 0) LockSupport.parkNanos(delayMs * 1_000_000)
@@ -609,10 +643,28 @@ class KeyMintSecurityLevelInterceptor(
         }
 
         val certChainCopy = keyData.second.toList()
+        // Snapshot the freshly built KeyMetadata bytes so loadPersistedKeys
+        // can restore byte-identical authorizations after reboot. Without
+        // this, the rebuild path drops every authorization tag that wasn't
+        // captured into PersistedKeyData primitive fields (origin, block
+        // mode, padding, expiry timestamps...), which broke session pinning
+        // for apps that fingerprint metadata across keystore calls.
+        val metadataBytesForPersist = response.metadata?.let { md ->
+            runCatching {
+                val parcel = android.os.Parcel.obtain()
+                try {
+                    md.writeToParcel(parcel, 0)
+                    parcel.marshall()
+                } finally {
+                    parcel.recycle()
+                }
+            }.getOrNull()
+        }
         persistExecutor.execute {
             GeneratedKeyPersistence.save(
                 keyId = keyId,
                 keyPair = keyData.first,
+                secretKey = null,
                 nspace = keyDescriptor.nspace,
                 securityLevel = securityLevel,
                 certChain = certChainCopy,
@@ -622,6 +674,7 @@ class KeyMintSecurityLevelInterceptor(
                 purposes = parsedParams.purpose,
                 digests = parsedParams.digest,
                 isAttestationKey = isAttestKeyRequest,
+                metadataBytes = metadataBytesForPersist,
             )
         }
 
@@ -842,6 +895,61 @@ class KeyMintSecurityLevelInterceptor(
                     return@runCatching
                 }
 
+                // Symmetric (AES/HMAC/3DES) keys take a separate path:
+                // there is no PKCS8 private key, no certificate chain, just
+                // raw secret material plus the metadata snapshot.
+                val isSymmetric = record.symmetricKeyBytes.isNotEmpty()
+                if (isSymmetric) {
+                    val secretKey = javax.crypto.spec.SecretKeySpec(
+                        record.symmetricKeyBytes,
+                        record.symmetricAlgorithm,
+                    )
+                    val response = if (record.metadataBytes.isNotEmpty()) {
+                        runCatching {
+                            val parcel = android.os.Parcel.obtain()
+                            try {
+                                parcel.unmarshall(record.metadataBytes, 0, record.metadataBytes.size)
+                                parcel.setDataPosition(0)
+                                val metadata = KeyMetadata.CREATOR.createFromParcel(parcel)
+                                KeyEntryResponse().apply {
+                                    this.metadata = metadata
+                                    iSecurityLevel = original
+                                }
+                            } finally {
+                                parcel.recycle()
+                            }
+                        }.getOrElse { e ->
+                            SystemLogger.warning(
+                                "Failed to restore symmetric metadata for ${record.alias}, falling back to primitive rebuild",
+                                e,
+                            )
+                            rebuildSymmetricResponse(record)
+                        }
+                    } else {
+                        // Pre-v3 file with symmetric key — should not happen
+                        // because v3 always saves metadata, but be defensive:
+                        // rebuild a minimal KeyMetadata from primitives so
+                        // the secret material is still restored. Without
+                        // this, dropping the record would silently log the
+                        // user out the next time the alias is used.
+                        SystemLogger.info(
+                            "Symmetric record ${record.alias} missing metadata bytes, rebuilding from primitives"
+                        )
+                        rebuildSymmetricResponse(record)
+                    }
+                    generatedKeys[keyId] = GeneratedKeyInfo(
+                        keyPair = null,
+                        secretKey = secretKey,
+                        nspace = record.nspace,
+                        response = response,
+                        keyParams = response.metadata?.let { md ->
+                            KeyMintAttestation(md.authorizations?.map { it.keyParameter }?.toTypedArray() ?: emptyArray())
+                        },
+                    )
+                    SystemLogger.debug("Restored symmetric persisted key: $keyId (${record.symmetricAlgorithm}/${record.symmetricKeyBytes.size * 8}bit)")
+                    return@runCatching
+                }
+
                 val algorithmName = when (record.algorithm) {
                     Algorithm.EC -> "EC"
                     Algorithm.RSA -> "RSA"
@@ -867,62 +975,200 @@ class KeyMintSecurityLevelInterceptor(
                     blob = null
                 }
 
-                val attestation = KeyMintAttestation(
-                    keySize = record.keySize,
-                    algorithm = record.algorithm,
-                    ecCurve = record.ecCurve,
-                    ecCurveName = "",
-                    origin = null,
-                    blockMode = emptyList(),
-                    padding = emptyList(),
-                    purpose = record.purposes,
-                    digest = record.digests,
-                    rsaPublicExponent = null,
-                    certificateSerial = null,
-                    certificateSubject = null,
-                    certificateNotBefore = null,
-                    certificateNotAfter = null,
-                    attestationChallenge = null,
-                    brand = null,
-                    device = null,
-                    product = null,
-                    serial = null,
-                    imei = null,
-                    meid = null,
-                    manufacturer = null,
-                    model = null,
-                    secondImei = null,
-                    activeDateTime = null,
-                    originationExpireDateTime = null,
-                    usageExpireDateTime = null,
-                    usageCountLimit = null,
-                    callerNonce = null,
-                    nonce = null,
-                    unlockedDeviceRequired = null,
-                    includeUniqueId = null,
-                    rollbackResistance = null,
-                    earlyBootOnly = null,
-                    allowWhileOnBody = null,
-                    trustedUserPresenceRequired = null,
-                    trustedConfirmationRequired = null,
-                    noAuthRequired = null,
-                    maxUsesPerBoot = null,
-                    maxBootLevel = null,
-                    minMacLength = null,
-                    rsaOaepMgfDigest = emptyList(),
-                )
+                // Prefer the byte-identical metadata snapshot persisted by v3
+                // saves so apps that fingerprint the metadata (e.g. they
+                // pin algorithm/purpose/digest/origin/authorization order
+                // across reboots) keep their session valid. Fall back to
+                // rebuilding
+                // from primitive fields for v1-era files (which lose
+                // authorization tags that weren't captured then).
+                val response = if (record.metadataBytes.isNotEmpty()) {
+                    runCatching {
+                        val parcel = android.os.Parcel.obtain()
+                        try {
+                            parcel.unmarshall(record.metadataBytes, 0, record.metadataBytes.size)
+                            parcel.setDataPosition(0)
+                            val metadata = KeyMetadata.CREATOR.createFromParcel(parcel)
+                            // Make sure the descriptor's nspace matches the
+                            // KEY_ID we will hand callers. updateSubcomponent
+                            // and getKeyEntry both index by nspace.
+                            metadata.key = metadata.key ?: KeyDescriptor().apply {
+                                domain = Domain.KEY_ID
+                                nspace = record.nspace
+                                alias = null
+                                blob = null
+                            }
+                            KeyEntryResponse().apply {
+                                this.metadata = metadata
+                                iSecurityLevel = original
+                            }
+                        } finally {
+                            parcel.recycle()
+                        }
+                    }.getOrElse { e ->
+                        SystemLogger.warning(
+                            "Failed to restore metadata bytes for $record.alias, falling back to rebuild",
+                            e,
+                        )
+                        rebuildResponseFromRecord(record, certChain, descriptor)
+                    }
+                } else {
+                    rebuildResponseFromRecord(record, certChain, descriptor)
+                }
 
-                val response = buildKeyEntryResponse(record.uid, certChain, attestation, descriptor)
-                generatedKeys[keyId] = GeneratedKeyInfo(keyPair, null, record.nspace, response, attestation)
-                if (record.isAttestationKey) attestationKeys.add(keyId)
+                val keyIdRestored = KeyIdentifier(record.uid, record.alias)
+                generatedKeys[keyIdRestored] = GeneratedKeyInfo(keyPair, null, record.nspace, response, response.metadata?.let { md ->
+                    // Re-derive an attestation summary from authorizations so
+                    // any code path that reads keyParams (e.g. logging) still
+                    // works. This does not feed back into the metadata bytes.
+                    KeyMintAttestation(md.authorizations?.map { it.keyParameter }?.toTypedArray() ?: emptyArray())
+                })
+                if (record.isAttestationKey) attestationKeys.add(keyIdRestored)
 
-                SystemLogger.debug("Restored persisted key: $keyId")
+                SystemLogger.debug("Restored persisted key: $keyIdRestored")
             }.onFailure {
                 SystemLogger.error("Failed to restore key: uid=${record.uid} alias=${record.alias}", it)
             }
         }
 
         SystemLogger.info("Key restoration complete. Total in memory: ${generatedKeys.size}")
+    }
+
+    /**
+     * Fallback rebuild path used when no v3 metadata snapshot is available
+     * (key was saved by an older build, or the snapshot failed to deserialize).
+     * Rebuilds KeyEntryResponse from primitive fields. This loses any
+     * authorization tags that weren't captured at save time, which is why we
+     * prefer the byte-identical v3 snapshot whenever possible.
+     */
+    private fun rebuildResponseFromRecord(
+        record: PersistedKeyData,
+        certChain: List<Certificate>,
+        descriptor: KeyDescriptor,
+    ): KeyEntryResponse {
+        val attestation = KeyMintAttestation(
+            keySize = record.keySize,
+            algorithm = record.algorithm,
+            ecCurve = record.ecCurve,
+            ecCurveName = "",
+            origin = null,
+            blockMode = emptyList(),
+            padding = emptyList(),
+            purpose = record.purposes,
+            digest = record.digests,
+            rsaPublicExponent = null,
+            certificateSerial = null,
+            certificateSubject = null,
+            certificateNotBefore = null,
+            certificateNotAfter = null,
+            attestationChallenge = null,
+            brand = null,
+            device = null,
+            product = null,
+            serial = null,
+            imei = null,
+            meid = null,
+            manufacturer = null,
+            model = null,
+            secondImei = null,
+            activeDateTime = null,
+            originationExpireDateTime = null,
+            usageExpireDateTime = null,
+            usageCountLimit = null,
+            callerNonce = null,
+            nonce = null,
+            unlockedDeviceRequired = null,
+            includeUniqueId = null,
+            rollbackResistance = null,
+            earlyBootOnly = null,
+            allowWhileOnBody = null,
+            trustedUserPresenceRequired = null,
+            trustedConfirmationRequired = null,
+            noAuthRequired = null,
+            maxUsesPerBoot = null,
+            maxBootLevel = null,
+            minMacLength = null,
+            rsaOaepMgfDigest = emptyList(),
+        )
+        return buildKeyEntryResponse(record.uid, certChain, attestation, descriptor)
+    }
+
+    /**
+     * Defensive fallback for symmetric key records that somehow ended up
+     * without a metadata snapshot (e.g. a save where Parcel.marshall()
+     * threw and persisted an empty mdBytes, or a future format where the
+     * snapshot is lazily populated). Without this fallback, loadAll would
+     * skip the record and the secret material would be effectively lost,
+     * silently logging the user out the next time the alias is used.
+     *
+     * The rebuilt KeyMetadata is structurally minimal — only the primitive
+     * authorization tags we captured at save time. That's worse than a
+     * byte-identical snapshot for apps that fingerprint metadata, but it
+     * still keeps the AES key alive across reboots, which is the
+     * dominant correctness concern.
+     */
+    private fun rebuildSymmetricResponse(record: PersistedKeyData): KeyEntryResponse {
+        val attestation = KeyMintAttestation(
+            keySize = record.keySize,
+            algorithm = record.algorithm,
+            ecCurve = record.ecCurve,
+            ecCurveName = "",
+            origin = null,
+            blockMode = emptyList(),
+            padding = emptyList(),
+            purpose = record.purposes,
+            digest = record.digests,
+            rsaPublicExponent = null,
+            certificateSerial = null,
+            certificateSubject = null,
+            certificateNotBefore = null,
+            certificateNotAfter = null,
+            attestationChallenge = null,
+            brand = null,
+            device = null,
+            product = null,
+            serial = null,
+            imei = null,
+            meid = null,
+            manufacturer = null,
+            model = null,
+            secondImei = null,
+            activeDateTime = null,
+            originationExpireDateTime = null,
+            usageExpireDateTime = null,
+            usageCountLimit = null,
+            callerNonce = null,
+            nonce = null,
+            unlockedDeviceRequired = null,
+            includeUniqueId = null,
+            rollbackResistance = null,
+            earlyBootOnly = null,
+            allowWhileOnBody = null,
+            trustedUserPresenceRequired = null,
+            trustedConfirmationRequired = null,
+            noAuthRequired = null,
+            maxUsesPerBoot = null,
+            maxBootLevel = null,
+            minMacLength = null,
+            rsaOaepMgfDigest = emptyList(),
+        )
+        val metadata = KeyMetadata().apply {
+            keySecurityLevel = securityLevel
+            key = KeyDescriptor().apply {
+                domain = Domain.KEY_ID
+                nspace = record.nspace
+                alias = null
+                blob = null
+            }
+            certificate = null
+            certificateChain = null
+            authorizations = attestation.toAuthorizations(record.uid, securityLevel)
+            modificationTimeMs = System.currentTimeMillis()
+        }
+        return KeyEntryResponse().apply {
+            this.metadata = metadata
+            iSecurityLevel = original
+        }
     }
 
     companion object {
@@ -1126,41 +1372,47 @@ private fun KeyMintAttestation.toAuthorizations(
         authList.add(createAuth(Tag.BOOT_PATCHLEVEL, KeyParameterValue.integer(bootPatch)))
     }
 
-    fun createSwAuth(tag: Int, value: KeyParameterValue): Authorization {
+    /**
+     * Keystore-enforced authorizations (CREATION_DATETIME, ACTIVE_DATETIME,
+     * USER_ID, etc.) are tagged by real KeyMint HAL with
+     * SecurityLevel.KEYSTORE (= 100, byte 0x64), not SOFTWARE (= 0, byte
+     * 0x00). The previous SOFTWARE value is exactly what Duck Detector's
+     * "TEE Simulator generate-mode fingerprint" probe scans for in the
+     * generateKey reply parcel. Aligning with real hardware here defeats
+     * that probe across every keystore-enforced tag, not just
+     * CREATION_DATETIME's byte-5 window — so probe variants that scan
+     * later offsets are also covered.
+     */
+    fun createKeystoreAuth(tag: Int, value: KeyParameterValue): Authorization {
         val param = KeyParameter().apply {
             this.tag = tag
             this.value = value
         }
         return Authorization().apply {
             this.keyParameter = param
-            // Real KeyMint HAL marks keystore-enforced metadata (creation
-            // time, user id, etc.) with SecurityLevel.KEYSTORE (0x64), not
-            // SOFTWARE (0x00). Using SOFTWARE here is detectable by probes
-            // that scan the generateKey reply parcel for the 0x00 byte at
-            // the securityLevel slot of the last authorization entry.
             this.securityLevel = SecurityLevel.KEYSTORE
         }
     }
 
-    authList.add(createSwAuth(Tag.CREATION_DATETIME, KeyParameterValue.dateTime(System.currentTimeMillis())))
+    authList.add(createKeystoreAuth(Tag.CREATION_DATETIME, KeyParameterValue.dateTime(System.currentTimeMillis())))
 
     this.activeDateTime?.let {
-        authList.add(createSwAuth(Tag.ACTIVE_DATETIME, KeyParameterValue.dateTime(it.time)))
+        authList.add(createKeystoreAuth(Tag.ACTIVE_DATETIME, KeyParameterValue.dateTime(it.time)))
     }
     this.originationExpireDateTime?.let {
-        authList.add(createSwAuth(Tag.ORIGINATION_EXPIRE_DATETIME, KeyParameterValue.dateTime(it.time)))
+        authList.add(createKeystoreAuth(Tag.ORIGINATION_EXPIRE_DATETIME, KeyParameterValue.dateTime(it.time)))
     }
     this.usageExpireDateTime?.let {
-        authList.add(createSwAuth(Tag.USAGE_EXPIRE_DATETIME, KeyParameterValue.dateTime(it.time)))
+        authList.add(createKeystoreAuth(Tag.USAGE_EXPIRE_DATETIME, KeyParameterValue.dateTime(it.time)))
     }
     this.usageCountLimit?.let {
-        authList.add(createSwAuth(Tag.USAGE_COUNT_LIMIT, KeyParameterValue.integer(it)))
+        authList.add(createKeystoreAuth(Tag.USAGE_COUNT_LIMIT, KeyParameterValue.integer(it)))
     }
     if (this.unlockedDeviceRequired == true) {
-        authList.add(createSwAuth(Tag.UNLOCKED_DEVICE_REQUIRED, KeyParameterValue.boolValue(true)))
+        authList.add(createKeystoreAuth(Tag.UNLOCKED_DEVICE_REQUIRED, KeyParameterValue.boolValue(true)))
     }
 
-    authList.add(createSwAuth(Tag.USER_ID, KeyParameterValue.integer(callingUid / 100000)))
+    authList.add(createKeystoreAuth(Tag.USER_ID, KeyParameterValue.integer(callingUid / 100000)))
 
     return authList.toTypedArray()
 }

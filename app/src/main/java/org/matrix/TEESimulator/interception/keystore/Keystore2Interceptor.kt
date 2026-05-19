@@ -216,6 +216,28 @@ object Keystore2Interceptor : AbstractKeystoreInterceptor() {
             }
 
             if (descriptor.alias == null) {
+                if (descriptor.domain == Domain.KEY_ID) {
+                    // The probe pipeline (and some AOSP callers) switch follow-up
+                    // operations to KEY_ID semantics after generateKey returns a
+                    // KEY_ID descriptor. Without this branch, our software keys
+                    // are invisible to KEY_ID-based getKeyEntry calls and the
+                    // request falls through to the real keystore2 daemon, which
+                    // legitimately responds with KEY_NOT_FOUND. Duck Detector's
+                    // TimingSideChannelProbe captures that exception during its
+                    // warmup phase and surfaces it as
+                    // "Captured private binder exception during timing skip".
+                    // Resolving by KEY_ID and returning the cached response keeps
+                    // the call on the happy path, eliminating the warmup signal.
+                    val info = KeyMintSecurityLevelInterceptor.findGeneratedKeyByKeyId(
+                        callingUid, descriptor.nspace
+                    )
+                    if (info?.response != null) {
+                        SystemLogger.info(
+                            "[TX_ID: $txId] Found generated response via KEY_ID nspace=${descriptor.nspace}"
+                        )
+                        return InterceptorUtils.createTypedObjectReply(info.response)
+                    }
+                }
                 return TransactionResult.ContinueAndSkipPost
             }
             val keyId = KeyIdentifier(callingUid, descriptor.alias)
@@ -397,9 +419,24 @@ object Keystore2Interceptor : AbstractKeystoreInterceptor() {
                             )
                         KeyMintSecurityLevelInterceptor.attestationKeys.add(keyId)
 
+                        // Snapshot metadata bytes for the same reason as the
+                        // primary doSoftwareKeyGen path — loss-less restore
+                        // after reboot.
+                        val metadataBytesForPersist = response.metadata?.let { md ->
+                            runCatching {
+                                val parcel = android.os.Parcel.obtain()
+                                try {
+                                    md.writeToParcel(parcel, 0)
+                                    parcel.marshall()
+                                } finally {
+                                    parcel.recycle()
+                                }
+                            }.getOrNull()
+                        }
                         GeneratedKeyPersistence.save(
                             keyId = keyId,
                             keyPair = keyData.first,
+                            secretKey = null,
                             nspace = newNspace,
                             securityLevel = response.metadata.keySecurityLevel,
                             certChain = keyData.second,
@@ -409,6 +446,7 @@ object Keystore2Interceptor : AbstractKeystoreInterceptor() {
                             purposes = parsedParameters.purpose,
                             digests = parsedParameters.digest,
                             isAttestationKey = true,
+                            metadataBytes = metadataBytesForPersist,
                         )
 
                         return InterceptorUtils.createTypedObjectReply(response)
