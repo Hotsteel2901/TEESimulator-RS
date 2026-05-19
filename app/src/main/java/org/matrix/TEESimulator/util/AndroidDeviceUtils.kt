@@ -1,6 +1,5 @@
 package org.matrix.TEESimulator.util
 
-import android.hardware.security.keymint.SecurityLevel
 import android.os.Build
 import android.os.SystemProperties
 import java.io.ByteArrayOutputStream
@@ -396,17 +395,15 @@ object AndroidDeviceUtils {
         )
 
     /**
-     * Retrieves the attestation version based on security level and OS version. StrongBox (level 2)
-     * requires version 300.
+     * Retrieves the attestation version for the given security level. The value follows the device
+     * OS: cached attestation data wins, then attestVersionMap[SDK_INT], then 400 as last resort.
+     * A static StrongBox=300 floor would force a major-version mismatch with the TEE chain on
+     * Android 16 devices that report keymaster 400 across both security levels.
      *
      * @param securityLevel The security level of the attestation (1 for TEE, 2 for StrongBox).
      * @return The appropriate attestation version number.
      */
     fun getAttestVersion(securityLevel: Int): Int {
-        // StrongBox security level requires an attestation version of at least 300.
-        if (securityLevel == SecurityLevel.STRONGBOX) {
-            return 300
-        }
         val cached = DeviceAttestationService.CachedAttestationData?.attestVersion
         val version = cached
             ?: attestVersionMap[Build.VERSION.SDK_INT]
