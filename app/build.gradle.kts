@@ -98,6 +98,7 @@ val buildRustCertgen by tasks.registering(Exec::class) {
     outputs.dir(rootProject.projectDir.resolve("app/src/main/jniLibs"))
 
     environment("ANDROID_NDK_HOME", android.ndkDirectory.absolutePath)
+    environment("PATH", "${System.getProperty("user.home")}/.cargo/bin:${System.getenv("PATH") ?: ""}")
 }
 
 // AGP auto-detects jniLibs/ as an input to mergeJniLibFolders — wire the dependency
