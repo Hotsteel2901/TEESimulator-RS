@@ -194,7 +194,8 @@ class KeyMintSecurityLevelInterceptor(
                     SystemLogger.info("Found new IKeystoreOperation. Registering interceptor...")
                     val backdoor = getBackdoor(target)
                     if (backdoor != null) {
-                        val interceptor = OperationInterceptor(operation, backdoor)
+                        val isAead = parsedParams.blockMode.firstOrNull() == BlockMode.GCM
+                        val interceptor = OperationInterceptor(operation, backdoor, isAead)
                         register(backdoor, operationBinder, interceptor, OperationInterceptor.INTERCEPTED_CODES)
                         interceptedOperations[operationBinder] = interceptor
                     } else {

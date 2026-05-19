@@ -13,6 +13,7 @@ import org.matrix.TEESimulator.interception.keystore.InterceptorUtils
 class OperationInterceptor(
     private val original: IKeystoreOperation,
     private val backdoor: IBinder,
+    private val isAead: Boolean,
 ) : BinderInterceptor() {
 
     override fun onPreTransact(
@@ -26,6 +27,10 @@ class OperationInterceptor(
     ): TransactionResult {
         val methodName = transactionNames[code] ?: "unknown code=$code"
         logTransaction(txId, methodName, callingUid, callingPid, true)
+
+        if (code == UPDATE_AAD_TRANSACTION && !isAead) {
+            return InterceptorUtils.createServiceSpecificErrorReply(KeystoreErrorCodes.invalidTag)
+        }
 
         if (code == FINISH_TRANSACTION || code == ABORT_TRANSACTION) {
             KeyMintSecurityLevelInterceptor.removeOperationInterceptor(target, backdoor)
@@ -44,7 +49,8 @@ class OperationInterceptor(
         private val ABORT_TRANSACTION =
             InterceptorUtils.getTransactCode(IKeystoreOperation.Stub::class.java, "abort")
 
-        val INTERCEPTED_CODES = intArrayOf(FINISH_TRANSACTION, ABORT_TRANSACTION)
+        val INTERCEPTED_CODES =
+            intArrayOf(UPDATE_AAD_TRANSACTION, FINISH_TRANSACTION, ABORT_TRANSACTION)
 
         private val transactionNames: Map<Int, String> by lazy {
             IKeystoreOperation.Stub::class
