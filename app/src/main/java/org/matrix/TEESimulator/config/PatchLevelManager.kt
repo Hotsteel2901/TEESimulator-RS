@@ -82,7 +82,12 @@ object PatchLevelManager {
             )
             return
         }
-        atomicWrite(date)
+        try {
+            atomicWrite(date)
+        } catch (e: Exception) {
+            SystemLogger.error("PatchLevelManager: atomicWrite failed for $date", e)
+            return
+        }
         applyToProps(date)
         SystemLogger.info("PatchLevelManager: applied patch date $date")
     }
