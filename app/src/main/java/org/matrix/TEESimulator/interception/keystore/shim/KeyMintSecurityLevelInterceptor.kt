@@ -536,11 +536,17 @@ class KeyMintSecurityLevelInterceptor(
             parsedParams.algorithm != Algorithm.RSA
 
         if (isSymmetric) {
+            if (attestationKey != null) {
+                throw android.os.ServiceSpecificException(
+                    KEYMINT_INVALID_ARGUMENT,
+                    "ATTEST_KEY tag is not supported for symmetric algorithms (algo=${parsedParams.algorithm})",
+                )
+            }
             val algoName = when (parsedParams.algorithm) {
                 Algorithm.AES -> "AES"
                 Algorithm.HMAC -> "HmacSHA256"
                 else -> throw android.os.ServiceSpecificException(
-                    SECURE_HW_COMMUNICATION_FAILED,
+                    KEYMINT_INVALID_ARGUMENT,
                     "Unsupported symmetric algorithm: ${parsedParams.algorithm}",
                 )
             }
