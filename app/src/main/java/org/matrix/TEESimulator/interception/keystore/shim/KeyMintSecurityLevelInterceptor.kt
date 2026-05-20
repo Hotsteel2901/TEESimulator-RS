@@ -21,12 +21,10 @@ import java.security.cert.Certificate
 import java.security.cert.CertificateFactory
 import java.security.spec.PKCS8EncodedKeySpec
 import java.util.Date
-import java.util.concurrent.CompletableFuture
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.ConcurrentLinkedDeque
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicInteger
-import java.util.concurrent.atomic.AtomicReference
 import java.util.concurrent.locks.LockSupport
 import org.matrix.TEESimulator.attestation.AttestationBuilder
 import org.matrix.TEESimulator.attestation.AttestationConstants
@@ -59,10 +57,6 @@ class KeyMintSecurityLevelInterceptor(
         val response: KeyEntryResponse,
         val keyParams: KeyMintAttestation? = null,
     )
-
-    // null = undecided, true = TEE works (use PATCH), false = TEE broken (use GENERATE)
-    // Instance field so TRUSTED_ENVIRONMENT and STRONGBOX decide independently
-    val teePathDecision = AtomicReference<Boolean?>(null)
 
     private val activeOps = ConcurrentHashMap<Int, ConcurrentLinkedDeque<SoftwareOperation>>()
     private val recentOps = ConcurrentHashMap<Int, ConcurrentLinkedDeque<Long>>()
@@ -506,16 +500,10 @@ class KeyMintSecurityLevelInterceptor(
                             (attestationKey.alias?.let { isAttestationKey(KeyIdentifier(callingUid, it)) }
                                 ?: attestationKeys.any { kid -> kid.uid == callingUid && generatedKeys[kid]?.nspace == attestationKey.nspace }))
 
-                val isAuto = ConfigurationManager.isAutoMode(callingUid)
-
-                if (isAuto) SystemLogger.debug("AUTO dispatch: teePathDecision=${teePathDecision.get()} for ${keyDescriptor.alias}")
-
-                SystemLogger.trace { "[TRACE-$txId] dispatch: forceGen=$forceGenerate isAuto=$isAuto teePath=${teePathDecision.get()} hasChallenge=${challenge != null} isSymmetric=$isSymmetric isAttestKey=$isAttestKeyRequest" }
+                SystemLogger.trace { "[TRACE-$txId] dispatch: forceGen=$forceGenerate hasChallenge=${challenge != null} isSymmetric=$isSymmetric isAttestKey=$isAttestKeyRequest" }
 
                 when {
                     forceGenerate -> doSoftwareKeyGen(callingUid, keyDescriptor, attestationKey, parsedParams, keyId, isAttestKeyRequest)
-                    isAuto && teePathDecision.get() == null -> raceTeePatch(callingUid, keyDescriptor, attestationKey, params, parsedParams, keyId, isAttestKeyRequest)
-                    isAuto && teePathDecision.get() == false -> doSoftwareKeyGen(callingUid, keyDescriptor, attestationKey, parsedParams, keyId, isAttestKeyRequest)
                     parsedParams.attestationChallenge != null -> TransactionResult.Continue
                     else -> {
                         cleanupKeyData(keyId)
@@ -694,93 +682,6 @@ class KeyMintSecurityLevelInterceptor(
         }
 
         return InterceptorUtils.createTypedObjectReply(response.metadata)
-    }
-
-    private fun raceTeePatch(
-        callingUid: Int,
-        keyDescriptor: KeyDescriptor,
-        attestationKey: KeyDescriptor?,
-        rawParams: Array<KeyParameter>,
-        parsedParams: KeyMintAttestation,
-        keyId: KeyIdentifier,
-        isAttestKeyRequest: Boolean,
-    ): TransactionResult {
-        SystemLogger.info("AUTO: racing TEE vs software for ${keyDescriptor.alias}")
-
-        val teeDescriptor = KeyDescriptor().apply {
-            domain = keyDescriptor.domain
-            nspace = keyDescriptor.nspace
-            alias = keyDescriptor.alias
-            blob = keyDescriptor.blob
-        }
-        val teeAttestKey = attestationKey?.let {
-            KeyDescriptor().apply {
-                domain = it.domain
-                nspace = it.nspace
-                alias = it.alias
-                blob = it.blob
-            }
-        }
-
-        val threadA = CompletableFuture.supplyAsync {
-            original.generateKey(teeDescriptor, teeAttestKey, rawParams, 0, byteArrayOf())
-        }
-
-        val swDescriptor = KeyDescriptor().apply {
-            domain = keyDescriptor.domain
-            nspace = secureRandom.nextLong()
-            alias = keyDescriptor.alias
-            blob = keyDescriptor.blob
-        }
-        val swKeyId = KeyIdentifier(callingUid, keyDescriptor.alias)
-
-        val threadB = CompletableFuture.supplyAsync {
-            doSoftwareKeyGen(callingUid, swDescriptor, attestationKey, parsedParams, swKeyId, isAttestKeyRequest)
-        }
-
-        return try {
-            val teeMetadata = threadA.join()
-            threadB.cancel(true)
-            teePathDecision.compareAndSet(null, true)
-            SystemLogger.info("AUTO: TEE succeeded, path locked to PATCH for ${keyDescriptor.alias}")
-
-            val originalChain = CertificateHelper.getCertificateChain(teeMetadata)
-            if (originalChain != null && originalChain.size > 1) {
-                val newChain = AttestationPatcher.patchCertificateChain(
-                    originalChain, callingUid, parsedParams.certificateNotBefore, parsedParams.certificateNotAfter
-                )
-                CertificateHelper.updateCertificateChain(teeMetadata, newChain).getOrThrow()
-                teeMetadata.authorizations =
-                    InterceptorUtils.patchAuthorizations(teeMetadata.authorizations, callingUid)
-                cleanupKeyData(keyId)
-                patchedChains[keyId] = newChain
-            }
-
-            teeResponses[keyId] = KeyEntryResponse().apply {
-                this.metadata = teeMetadata
-                iSecurityLevel = original
-            }
-
-            InterceptorUtils.createTypedObjectReply(teeMetadata)
-        } catch (_: Exception) {
-            if (teePathDecision.get() == true) {
-                threadB.cancel(true)
-                SystemLogger.info("AUTO: TEE failed locally but globally functional, forwarding for ${keyDescriptor.alias}")
-                return TransactionResult.Continue
-            }
-            teePathDecision.compareAndSet(null, false)
-            SystemLogger.info("AUTO: TEE failed, path locked to GENERATE for ${keyDescriptor.alias}")
-            try {
-                threadB.join()
-            } catch (e: Exception) {
-                SystemLogger.error("AUTO: both paths failed for ${keyDescriptor.alias}.", e)
-                val code =
-                    if (e.cause is android.os.ServiceSpecificException)
-                        (e.cause as android.os.ServiceSpecificException).errorCode
-                    else SECURE_HW_COMMUNICATION_FAILED
-                InterceptorUtils.createServiceSpecificErrorReply(code)
-            }
-        }
     }
 
     private fun generateAttestedKeyPairNative(
