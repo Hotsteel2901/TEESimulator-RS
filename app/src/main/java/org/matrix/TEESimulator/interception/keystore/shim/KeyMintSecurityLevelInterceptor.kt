@@ -1166,6 +1166,51 @@ class KeyMintSecurityLevelInterceptor(
         private val usageCounters = ConcurrentHashMap<KeyIdentifier, java.util.concurrent.atomic.AtomicInteger>()
         private val interceptedOperations = ConcurrentHashMap<IBinder, OperationInterceptor>()
 
+        /**
+         * Grant plane (duck PR #38 / #57). A grant is caller-bound and carries an
+         * access vector; resolving one yields the owner's own KeyEntryResponse so
+         * every access plane returns a coherent certificate chain.
+         */
+        data class SoftwareGrant(
+            val ownerKeyId: KeyIdentifier,
+            val granteeUid: Int,
+            val accessVector: Int,
+        )
+
+        val softwareGrants = ConcurrentHashMap<Long, SoftwareGrant>() // grantId -> grant
+
+        /** Mint or reuse a grant id (random, non-zero, non -1 Long). Re-grant reuses the id. */
+        fun issueGrant(ownerKeyId: KeyIdentifier, granteeUid: Int, accessVector: Int): Long {
+            softwareGrants.entries
+                .firstOrNull { it.value.ownerKeyId == ownerKeyId && it.value.granteeUid == granteeUid }
+                ?.let { existing ->
+                    softwareGrants[existing.key] = existing.value.copy(accessVector = accessVector)
+                    return existing.key
+                }
+            var id = secureRandom.nextLong()
+            while (id == 0L || id == -1L || softwareGrants.containsKey(id)) id = secureRandom.nextLong()
+            softwareGrants[id] = SoftwareGrant(ownerKeyId, granteeUid, accessVector)
+            return id
+        }
+
+        /** Caller-bound resolve: only the designated grantee, only while the key exists. */
+        fun resolveGrant(grantId: Long, callerUid: Int): SoftwareGrant? =
+            softwareGrants[grantId]?.takeIf {
+                it.granteeUid == callerUid && generatedKeys.containsKey(it.ownerKeyId)
+            }
+
+        fun revokeGrant(ownerKeyId: KeyIdentifier, granteeUid: Int) {
+            softwareGrants.entries
+                .filter { it.value.ownerKeyId == ownerKeyId && it.value.granteeUid == granteeUid }
+                .forEach { softwareGrants.remove(it.key) }
+        }
+
+        fun purgeGrantsForKey(ownerKeyId: KeyIdentifier) {
+            softwareGrants.entries
+                .filter { it.value.ownerKeyId == ownerKeyId }
+                .forEach { softwareGrants.remove(it.key) }
+        }
+
         fun getGeneratedKeyResponse(keyId: KeyIdentifier): KeyEntryResponse? =
             generatedKeys[keyId]?.response ?: teeResponses[keyId]
 
@@ -1190,6 +1235,7 @@ class KeyMintSecurityLevelInterceptor(
         fun isAttestationKey(keyId: KeyIdentifier): Boolean = attestationKeys.contains(keyId)
 
         fun cleanupKeyData(keyId: KeyIdentifier) {
+            purgeGrantsForKey(keyId) // grants die with the key (re-key orphans them too)
             if (generatedKeys.remove(keyId) != null) {
                 SystemLogger.debug("Remove generated key ${keyId}")
                 GeneratedKeyPersistence.delete(keyId)
@@ -1230,6 +1276,7 @@ class KeyMintSecurityLevelInterceptor(
             attestationKeys.clear()
             importedKeys.clear()
             usageCounters.clear()
+            softwareGrants.clear()
             GeneratedKeyPersistence.deleteAll()
             SystemLogger.info("Cleared all cached keys ($count entries)$reasonMessage.")
         }

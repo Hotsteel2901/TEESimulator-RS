@@ -48,6 +48,8 @@ object Keystore2Interceptor : AbstractKeystoreInterceptor() {
         else null
     private val GET_NUMBER_OF_ENTRIES_TRANSACTION =
         InterceptorUtils.getTransactCode(stubBinderClass, "getNumberOfEntries")
+    private val GRANT_TRANSACTION = InterceptorUtils.getTransactCode(stubBinderClass, "grant")
+    private val UNGRANT_TRANSACTION = InterceptorUtils.getTransactCode(stubBinderClass, "ungrant")
 
     private val transactionNames: Map<Int, String> by lazy {
         stubBinderClass.declaredFields
@@ -59,6 +61,7 @@ object Keystore2Interceptor : AbstractKeystoreInterceptor() {
     }
 
     private const val RESPONSE_KEY_NOT_FOUND = 7
+    private const val RESPONSE_PERMISSION_DENIED = 6
     private val deletedSoftwareKeys: MutableSet<KeyIdentifier> = ConcurrentHashMap.newKeySet()
     private val userUpdatedKeys = ConcurrentHashMap.newKeySet<KeyIdentifier>()
 
@@ -80,6 +83,8 @@ object Keystore2Interceptor : AbstractKeystoreInterceptor() {
                 LIST_ENTRIES_TRANSACTION,
                 LIST_ENTRIES_BATCHED_TRANSACTION,
                 GET_NUMBER_OF_ENTRIES_TRANSACTION,
+                GRANT_TRANSACTION,
+                UNGRANT_TRANSACTION,
             )
             .toIntArray()
     }
@@ -175,16 +180,47 @@ object Keystore2Interceptor : AbstractKeystoreInterceptor() {
         ) {
             logTransaction(txId, transactionNames[code]!!, callingUid, callingPid)
 
-            if (ConfigurationManager.shouldSkipUid(callingUid))
-                return TransactionResult.ContinueAndSkipPost
-
-            if (code == UPDATE_SUBCOMPONENT_TRANSACTION)
+            if (code == UPDATE_SUBCOMPONENT_TRANSACTION) {
+                if (ConfigurationManager.shouldSkipUid(callingUid))
+                    return TransactionResult.ContinueAndSkipPost
                 return handleUpdateSubcomponent(callingUid, data)
+            }
 
             data.enforceInterface(IKeystoreService.DESCRIPTOR)
             val descriptor =
                 data.readTypedObject(KeyDescriptor.CREATOR)
                     ?: return TransactionResult.ContinueAndSkipPost
+
+            // A Domain.GRANT read is served for ANY grantee uid — including isolated
+            // services (bindIsolatedService) that have no package mapping, so
+            // shouldSkipUid would otherwise drop them to the real keystore2. Resolve it
+            // before the package-scoped skip: caller-binding in resolveGrant() is the
+            // real access gate, mirroring keystore2 (a grant row is keyed on grantee+id,
+            // independent of the caller's policy).
+            if (code == GET_KEY_ENTRY_TRANSACTION && descriptor.domain == Domain.GRANT) {
+                val grant =
+                    KeyMintSecurityLevelInterceptor.resolveGrant(descriptor.nspace, callingUid)
+                if (grant == null) {
+                    // Ours but wrong caller -> KEY_NOT_FOUND (#57 probe 4, caller-binding);
+                    // not ours -> fall through to the real keystore2.
+                    return if (
+                        KeyMintSecurityLevelInterceptor.softwareGrants.containsKey(descriptor.nspace)
+                    )
+                        InterceptorUtils.createErrorReply(RESPONSE_KEY_NOT_FOUND)
+                    else TransactionResult.ContinueAndSkipPost
+                }
+                if ((grant.accessVector and 0x4) == 0) { // GET_INFO = 0x4 (#57 probe 3)
+                    return InterceptorUtils.createErrorReply(RESPONSE_PERMISSION_DENIED)
+                }
+                val response =
+                    KeyMintSecurityLevelInterceptor.getGeneratedKeyResponse(grant.ownerKeyId)
+                        ?: return InterceptorUtils.createErrorReply(RESPONSE_KEY_NOT_FOUND)
+                // Same object the owner read returns -> coherent chain across planes.
+                return InterceptorUtils.createTypedObjectReply(response)
+            }
+
+            if (ConfigurationManager.shouldSkipUid(callingUid))
+                return TransactionResult.ContinueAndSkipPost
 
             if (code == DELETE_KEY_TRANSACTION) {
                 val keyId =
@@ -247,6 +283,8 @@ object Keystore2Interceptor : AbstractKeystoreInterceptor() {
                         return InterceptorUtils.createTypedObjectReply(teeResp)
                     }
                 }
+                // Domain.GRANT is handled earlier (before the package-scoped skip),
+                // so an alias-less read that reaches here is KEY_ID or unknown.
                 return TransactionResult.ContinueAndSkipPost
             }
             val keyId = KeyIdentifier(callingUid, descriptor.alias)
@@ -268,6 +306,41 @@ object Keystore2Interceptor : AbstractKeystoreInterceptor() {
                 KeyMintParameterLogger.logParameter(it.keyParameter)
             }
             return InterceptorUtils.createTypedObjectReply(response)
+        } else if (code == GRANT_TRANSACTION) {
+            logTransaction(txId, transactionNames[code] ?: "grant", callingUid, callingPid)
+            data.enforceInterface(IKeystoreService.DESCRIPTOR)
+            val key =
+                data.readTypedObject(KeyDescriptor.CREATOR)
+                    ?: return TransactionResult.ContinueAndSkipPost
+            val granteeUid = data.readInt()
+            val accessVector = data.readInt()
+            val ownerKeyId =
+                resolveOwnerKeyId(key, callingUid)
+                    ?.takeIf { KeyMintSecurityLevelInterceptor.generatedKeys.containsKey(it) }
+                    ?: return TransactionResult.ContinueAndSkipPost // real key -> real keystore2
+            val grantId =
+                KeyMintSecurityLevelInterceptor.issueGrant(ownerKeyId, granteeUid, accessVector)
+            val reply =
+                KeyDescriptor().apply {
+                    domain = Domain.GRANT
+                    nspace = grantId
+                    alias = null
+                    blob = null
+                }
+            return InterceptorUtils.createTypedObjectReply(reply)
+        } else if (code == UNGRANT_TRANSACTION) {
+            logTransaction(txId, transactionNames[code] ?: "ungrant", callingUid, callingPid)
+            data.enforceInterface(IKeystoreService.DESCRIPTOR)
+            val key =
+                data.readTypedObject(KeyDescriptor.CREATOR)
+                    ?: return TransactionResult.ContinueAndSkipPost
+            val granteeUid = data.readInt()
+            val ownerKeyId =
+                resolveOwnerKeyId(key, callingUid)
+                    ?.takeIf { KeyMintSecurityLevelInterceptor.generatedKeys.containsKey(it) }
+                    ?: return TransactionResult.ContinueAndSkipPost
+            KeyMintSecurityLevelInterceptor.revokeGrant(ownerKeyId, granteeUid)
+            return InterceptorUtils.createSuccessReply(writeResultCode = false)
         } else {
             logTransaction(
                 txId,
@@ -507,6 +580,24 @@ object Keystore2Interceptor : AbstractKeystoreInterceptor() {
         }
         return TransactionResult.SkipTransaction
     }
+
+    /**
+     * Resolves the owner [KeyIdentifier] a grant/ungrant call targets. APP/alias keys map
+     * directly; KEY_ID keys are looked up by nspace (mirrors the deleteKey resolver). Returns
+     * null for anything not addressable, so callers fall through to the real keystore2.
+     */
+    private fun resolveOwnerKeyId(descriptor: KeyDescriptor, callingUid: Int): KeyIdentifier? =
+        when {
+            descriptor.alias != null -> KeyIdentifier(callingUid, descriptor.alias)
+            descriptor.domain == Domain.KEY_ID ->
+                KeyMintSecurityLevelInterceptor.findGeneratedKeyByKeyId(callingUid, descriptor.nspace)
+                    ?.let { info ->
+                        KeyMintSecurityLevelInterceptor.generatedKeys.entries
+                            .firstOrNull { it.value.nspace == info.nspace && it.key.uid == callingUid }
+                            ?.key
+                    }
+            else -> null
+        }
 
     private fun handleUpdateSubcomponent(callingUid: Int, data: Parcel): TransactionResult {
         data.enforceInterface(IKeystoreService.DESCRIPTOR)
