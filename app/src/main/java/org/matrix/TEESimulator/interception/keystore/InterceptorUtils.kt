@@ -127,7 +127,7 @@ object InterceptorUtils {
             val savedPos = parcel.dataPosition()
             val wire = parcel.marshall()
             parcel.setDataPosition(savedPos)
-            val path = "/data/local/tmp/teesim-$diagnosticTag-${System.nanoTime()}.bin"
+            val path = "/data/local/tmp/teesim-$diagnosticTag.bin"
             runCatching { java.io.File(path).writeBytes(wire) }
             SystemLogger.debug("[$diagnosticTag] reply len=${wire.size} path=$path")
         }

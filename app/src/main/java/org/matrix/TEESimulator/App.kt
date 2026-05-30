@@ -6,12 +6,11 @@ import android.content.Context
 import android.content.ContextWrapper
 import android.os.Build
 import android.os.Looper
+import java.io.File
 import java.security.Security
 import org.bouncycastle.jce.provider.BouncyCastleProvider
 import org.matrix.TEESimulator.config.BootStateManager
-import org.matrix.TEESimulator.config.BulletinPoller
 import org.matrix.TEESimulator.config.ConfigurationManager
-import org.matrix.TEESimulator.config.PatchLevelManager
 import org.matrix.TEESimulator.interception.keystore.AbstractKeystoreInterceptor
 import org.matrix.TEESimulator.interception.keystore.Keystore2Interceptor
 import org.matrix.TEESimulator.interception.keystore.KeystoreInterceptor
@@ -41,12 +40,12 @@ object App {
         }
 
         try {
+            purgeDebugDiagnostics()
             prepareEnvironment()
 
-            // Spoof boot-state and patch-level props before any hook attaches,
-            // so keystore2's cached snapshot reflects the spoofed values.
+            // Spoof boot-state props before any hook attaches, so keystore2's
+            // cached snapshot reflects the spoofed values.
             BootStateManager.apply()
-            PatchLevelManager.initialize()
 
             // Load the package configuration.
             ConfigurationManager.initialize()
@@ -65,18 +64,31 @@ object App {
 
             NativeCertGen.initialize("/data/adb/modules/tricky_store/libcertgen.so")
 
-            try {
-                BulletinPoller.start()
-            } catch (e: Throwable) {
-                SystemLogger.error("Failed to start BulletinPoller", e)
-            }
-
             // This starts the message queue processing. It blocks here indefinitely
             // processing messages until Looper.myLooper().quit() is called.
             Looper.loop()
         } catch (e: Exception) {
             SystemLogger.error("A fatal error occurred in the main application thread.", e)
             throw e
+        }
+    }
+
+    /**
+     * Release builds never emit diagnostics. Sweep any `.bin` dumps a prior
+     * debug install left in the world-readable temp dir so they can't act as a
+     * detection artifact for apps that probe /data/local/tmp.
+     */
+    private fun purgeDebugDiagnostics() {
+        if (SystemLogger.isDebugBuild) return
+        val stale =
+            File("/data/local/tmp").listFiles { _, name ->
+                name.startsWith("teesim-") && name.endsWith(".bin")
+            } ?: return
+        stale.forEach { runCatching { it.delete() } }
+        if (stale.isNotEmpty()) {
+            // warning() bypasses the rate limiter, so this once-per-boot audit
+            // line survives the noisy startup window.
+            SystemLogger.warning("Purged ${stale.size} stale debug diagnostic(s) from /data/local/tmp")
         }
     }
 
