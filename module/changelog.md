@@ -1,3 +1,34 @@
+## TEESimulator-RS v6.0.1-251
+
+14 commits since v6.0.0-235. Clears the remaining Duck Detector grant-domain rows (incl. the Android 16 OnePlus report), restores Google Wallet and fingerprint compatibility, and removes the in-module patch-level/bulletin resolvers. Test device (SDK 35) TEE tamper score 28 → 8.
+
+### Detection coverage
+- Grant plane virtualized: owner read and cross-app `Domain.GRANT` read return one identical chain. 6 RED rows cleared. (28 → 18)
+- Generate-mode fingerprint: dropped 2 surplus authorizations (both patchlevels), USER_ID moved to SOFTWARE to mirror a captured device. (18 → 8)
+- Android 16 grant: patch-mode keys now served on the grant plane, so owner and grant reads match — fixes CHAIN_SPLIT.
+- Grant gated to SDK ≥ 36: Android 15 answers PERMISSION_DENIED, no synthetic over-capability.
+- Stale-chain eviction: import and updateSubcomponent drop the cached attestation; no pre-mutation chain replays.
+- Lifecycle coherence: clearNamespace / deleteAllKeys / migrateKeyNamespace mirror synthetic key and grant state — defeats delete-then-read probes.
+- Device-ID attestation mirrors the real TEE: returns CANNOT_ATTEST_IDS where silicon can't attest, instead of forging it.
+
+### App compatibility
+- Google Wallet: INCLUDE_UNIQUE_ID stripped (not rejected) when the caller lacks the permission; card binding works. (PR #27)
+- Fingerprint / vendor keys: KEY_ID miss skips the post-handler, so real HAL operations are no longer wrapped and broken. (PR #26)
+
+### Removed
+- PatchLevelManager — auto-resolved the security-patch date from an installed PlayIntegrityFix module (with hot-reload) and applied it to props.
+- BulletinPoller — scheduled security-bulletin refresh.
+
+### Other
+- Release builds purge stale `teesim-*.bin` diagnostics from `/data/local/tmp` at boot.
+- Vol-key confirmation rewritten to 1s `getevent` bursts (piped stream missed single presses on Magisk).
+
+### Verified
+- SDK 35, Xiaomi 23106RN0DA: tamper 28 → 8; generate-mode signal gone; 4 grant rows UNAVAILABLE (correct for Android 15); no regressions.
+- Android 16 grant fix built but unconfirmed on SDK 36 — needs an affected OnePlus user to confirm the grant rows clear.
+
+---
+
 ## TEESimulator-RS v6.0.0-235
 
 11 commits since v6.0.0-224. Duck Detector generate-mode fingerprint cleared. Shizuku-routed BYO attestation fixed. Vol-key confirmation restored on Magisk.
