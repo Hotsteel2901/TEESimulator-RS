@@ -9,7 +9,7 @@ pub mod certbuilder;
 pub mod logging;
 
 use jni::objects::{JByteArray, JClass, JIntArray, JObject, JString};
-use jni::sys::{jboolean, jbyteArray, jstring};
+use jni::sys::{jboolean, jbyteArray};
 use jni::JNIEnv;
 
 use crate::error::{CertGenError, Result};
@@ -138,44 +138,6 @@ fn init_logging_inner(env: &mut JNIEnv, verbose: jboolean, log_dir: &JString) ->
     logging::init(verbose != 0, &dir, 2, 3)
         .map_err(|e| CertGenError::Jni(format!("logging init failed: {e}")))?;
     Ok(())
-}
-
-// ---------------------------------------------------------------------------
-// JNI entry: dumpLogs
-// ---------------------------------------------------------------------------
-
-#[no_mangle]
-pub extern "system" fn Java_org_matrix_TEESimulator_pki_NativeCertGen_dumpLogs(
-    mut env: JNIEnv,
-    _class: JClass,
-) -> jstring {
-    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        dump_logs_inner(&mut env)
-    }));
-
-    match result {
-        Ok(Ok(raw)) => raw,
-        Ok(Err(e)) => {
-            tracing::error!(%e, "dumpLogs failed");
-            std::ptr::null_mut()
-        }
-        Err(_) => {
-            tracing::error!("dumpLogs panicked");
-            std::ptr::null_mut()
-        }
-    }
-}
-
-fn dump_logs_inner(env: &mut JNIEnv) -> Result<jstring> {
-    logging::dump::execute_dump()
-        .map_err(|e| CertGenError::Jni(format!("dump failed: {e}")))?;
-
-    // Read the dump path written by execute_dump
-    let path = std::fs::read_to_string("/data/adb/tricky_store/.dump_path")
-        .map_err(|e| CertGenError::Jni(format!("read dump path: {e}")))?;
-
-    let jpath = env.new_string(&path)?;
-    Ok(jpath.into_raw())
 }
 
 // ---------------------------------------------------------------------------

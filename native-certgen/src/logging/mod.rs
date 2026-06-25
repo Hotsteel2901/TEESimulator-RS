@@ -1,7 +1,5 @@
 mod kmsg;
 mod rotating;
-pub mod sysfs;
-pub mod dump;
 
 use std::path::Path;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};

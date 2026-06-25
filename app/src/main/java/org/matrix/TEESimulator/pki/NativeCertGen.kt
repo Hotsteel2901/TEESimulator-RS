@@ -84,10 +84,6 @@ object NativeCertGen {
 
     private external fun initLogging(verbose: Boolean, logDir: String): Boolean
 
-    private external fun dumpLogs(): String?
-
-    fun dump(): String? = if (isAvailable) dumpLogs() else null
-
     fun parseNativeResult(bytes: ByteArray): Pair<KeyPair, List<Certificate>> {
         val buf = ByteBuffer.wrap(bytes).order(ByteOrder.BIG_ENDIAN)
 
