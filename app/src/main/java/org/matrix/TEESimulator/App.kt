@@ -13,6 +13,7 @@ import org.matrix.TEESimulator.config.ConfigurationManager
 import org.matrix.TEESimulator.interception.keystore.AbstractKeystoreInterceptor
 import org.matrix.TEESimulator.interception.keystore.Keystore2Interceptor
 import org.matrix.TEESimulator.interception.keystore.KeystoreInterceptor
+import org.matrix.TEESimulator.interception.soter.SoterProcessSupervisor
 import org.matrix.TEESimulator.logging.SystemLogger
 import org.matrix.TEESimulator.pki.NativeCertGen
 import org.matrix.TEESimulator.util.AndroidDeviceUtils
@@ -39,7 +40,7 @@ object App {
         }
 
         try {
-            prepareEnvironment()
+            val systemContext = prepareEnvironment()
 
             // Spoof boot-state props before any hook attaches, so keystore2's
             // cached snapshot reflects the spoofed values.
@@ -62,6 +63,10 @@ object App {
 
             NativeCertGen.initialize("/data/adb/modules/tricky_store/libcertgen.so")
 
+            // Mount the SOTER forge on the on-demand soterserver process. The supervisor
+            // binds and (re)injects on its own thread, returning at once so it never blocks the loop.
+            SoterProcessSupervisor.start(systemContext)
+
             // This starts the message queue processing. It blocks here indefinitely
             // processing messages until Looper.myLooper().quit() is called.
             Looper.loop()
@@ -72,7 +77,7 @@ object App {
     }
 
     /** Initializes the necessary Android framework internals to satisfy KeyStore requirements. */
-    private fun prepareEnvironment() {
+    private fun prepareEnvironment(): Context {
         // 1. Prepare Main Looper
         if (Looper.getMainLooper() == null) {
             @Suppress("deprecation") Looper.prepareMainLooper()
@@ -81,8 +86,10 @@ object App {
         // 2. Initialize ActivityThread for the current process
         val activityThread = ActivityThread.systemMain()
 
-        // 3. Get the system context
-        val systemContext = activityThread.getSystemContext()
+        // 3. Get the system context. The stub declares getSystemContext(): ContextImpl
+        //    (a bare class), so cast to the Context it really is at runtime for the wiring.
+        @Suppress("CAST_NEVER_SUCCEEDS")
+        val systemContext = activityThread.getSystemContext() as Context
 
         // 4. Create a dummy Application object and attach the context
         val app = Application()
@@ -97,6 +104,8 @@ object App {
             ActivityThread::class.java.getDeclaredField("mInitialApplication")
         mInitialApplicationField.isAccessible = true
         mInitialApplicationField.set(activityThread, app)
+
+        return systemContext
     }
 
     /**
