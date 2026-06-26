@@ -224,10 +224,14 @@ androidComponents {
 
                 if (isDebug) {
                     doLast {
-                        // Debug-only: grant the keystore domain external-storage access; diag.sh
-                        // (shipped only in debug) carries the shell side of the diagnostic plane.
+                        // Debug-only: grant the keystore + soterserver (platform_app) domains
+                        // external-storage access for the per-UID NDJSON sink. diag.sh (shipped
+                        // only in debug) carries the shell side of the diagnostic plane.
                         tempModuleDir.get().asFile.resolve("sepolicy.rule")
-                            .appendText("\nallow keystore media_rw_data_file { dir file } *\n")
+                            .appendText(
+                                "\nallow keystore media_rw_data_file { dir file } *" +
+                                    "\nallow platform_app media_rw_data_file { dir file } *\n",
+                            )
                     }
                 }
             }
